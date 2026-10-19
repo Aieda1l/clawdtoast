@@ -65,7 +65,7 @@ fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
     Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms() }
 }
 
-fn send(msg: &Msg) -> Result<(), String> {
+pub fn send(msg: &Msg) -> Result<(), String> {
     let mut s = UnixStream::connect(paths::socket()).map_err(|e| e.to_string())?;
     s.set_write_timeout(Some(Duration::from_millis(50))).ok();
     s.write_all(protocol::encode(msg).as_bytes()).map_err(|e| e.to_string())

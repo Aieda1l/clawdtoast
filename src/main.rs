@@ -1,19 +1,31 @@
+mod config;
 mod core;
 mod daemon;
+mod install;
 mod log;
 #[cfg(target_os = "macos")]
 mod macos;
+mod overlay;
 mod paths;
 mod protocol;
 mod render;
 mod shim;
 mod sound;
+mod stack;
 mod text;
 
 use protocol::{Kind, Msg};
 
 fn usage() -> ! {
-    eprintln!("usage: clawdpet <hook EVENT | daemon [--headless] | test>");
+    eprintln!(
+        "usage: clawdpet <command>\n\
+         \x20 hook EVENT        run as a Claude Code hook (reads the hook JSON on stdin)\n\
+         \x20 daemon [--headless]\n\
+         \x20 test              show one card of each kind\n\
+         \x20 reload            make the running daemon re-read config.toml\n\
+         \x20 install [--force] add clawdpet's hooks to ~/.claude/settings.json\n\
+         \x20 uninstall         remove them again"
+    );
     std::process::exit(2);
 }
 
@@ -23,8 +35,24 @@ fn main() {
         ["hook", event] => shim::run(event), // always exits 0
         ["daemon"] => daemon::run(false),
         ["daemon", "--headless"] => daemon::run(true),
+        ["overlay"] => overlay::run(),
         ["test"] => self_test(),
+        ["reload"] => {
+            if shim::send(&Msg::Reload).is_err() {
+                println!("daemon is not running; config is read when it starts");
+            }
+        }
+        ["install"] => finish(install::run(true, false)),
+        ["install", "--force"] => finish(install::run(true, true)),
+        ["uninstall"] => finish(install::run(false, false)),
         _ => usage(),
+    }
+}
+
+fn finish(r: Result<(), String>) {
+    if let Err(e) = r {
+        eprintln!("clawdpet: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -39,17 +67,20 @@ fn self_test() {
         (Kind::Permission, "Claude needs your permission to use Bash"),
         (Kind::Idle, "Claude is waiting for your input"),
     ];
-    for (kind, text) in cards {
+    for (i, (kind, text)) in cards.into_iter().enumerate() {
         let m = Msg::Alert {
-            session_id: "test".into(),
+            // Distinct sessions, so the cards stack instead of replacing each other.
+            session_id: format!("test{i}"),
             kind,
             project: "clawdpet".into(),
             text: text.into(),
             ts: protocol::now_ms(),
         };
-        if let Ok(mut s) = std::os::unix::net::UnixStream::connect(paths::socket()) {
-            let _ = std::io::Write::write_all(&mut s, protocol::encode(&m).as_bytes());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(2500));
+        let _ = shim::send(&m);
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+    }
+    // Close the fake sessions so the daemon can exit once the cards are gone.
+    for i in 0..3 {
+        let _ = shim::send(&Msg::SessionClose { session_id: format!("test{i}") });
     }
 }

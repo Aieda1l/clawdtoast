@@ -16,6 +16,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std", "si
 fontdue = "0.9"
 png = "0.17"
 rodio = { version = "0.20", default-features = false, features = ["wav"] }
+toml = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

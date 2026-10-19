@@ -1,6 +1,8 @@
 //! Daemon state that does not depend on the UI: session registry, liveness, exit rules.
 
+use crate::config::Config;
 use crate::protocol::{Kind, Msg};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -10,9 +12,8 @@ pub struct Session {
     pub pid: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Card {
-    #[allow(dead_code)] // M1 stacking keys cards by session
     pub session_id: String,
     pub kind: Kind,
     pub project: String,
@@ -38,7 +39,7 @@ pub struct Core {
     next_liveness: Instant,
     grace: Duration,
     liveness: Duration,
-    subagent_alerts: bool,
+    pub config: Config,
 }
 
 fn env_secs(name: &str, default: u64) -> Duration {
@@ -46,7 +47,7 @@ fn env_secs(name: &str, default: u64) -> Duration {
 }
 
 impl Core {
-    pub fn new(now: Instant) -> Core {
+    pub fn new(now: Instant, config: Config) -> Core {
         let liveness = env_secs("CLAWDPET_LIVENESS_SECS", 30);
         Core {
             sessions: HashMap::new(),
@@ -55,7 +56,7 @@ impl Core {
             next_liveness: now + liveness,
             grace: env_secs("CLAWDPET_GRACE_SECS", 10),
             liveness,
-            subagent_alerts: std::env::var_os("CLAWDPET_SUBAGENT").is_some(),
+            config,
         }
     }
 
@@ -74,7 +75,15 @@ impl Core {
                 None
             }
             Msg::Alert { session_id, kind, project, text, ts } => {
-                if kind == Kind::Subagent && !self.subagent_alerts {
+                let e = &self.config.events;
+                let enabled = match kind {
+                    Kind::Done => e.stop,
+                    Kind::Permission => e.permission_prompt,
+                    Kind::Idle => e.idle_prompt,
+                    Kind::Subagent => e.subagent_stop,
+                    Kind::Other => true,
+                };
+                if !enabled {
                     return None;
                 }
                 // An alert from a session we never saw open (plugin installed mid-session).
@@ -84,6 +93,10 @@ impl Core {
                 }
                 let badge = (self.sessions.len() > 1).then(|| session_id.chars().take(4).collect());
                 Some(Card { session_id, kind, project, body: text, badge, ts })
+            }
+            Msg::Reload => {
+                self.config = Config::load();
+                None
             }
             Msg::Unknown => None,
         }
@@ -137,7 +150,7 @@ mod tests {
     #[test]
     fn badge_only_with_multiple_sessions() {
         let now = Instant::now();
-        let mut c = Core::new(now);
+        let mut c = Core::new(now, Config::default());
         c.handle(Msg::SessionOpen { session_id: "aaaa1".into(), pid: 0, cwd: "".into() }, now);
         assert!(c.handle(alert("aaaa1", Kind::Done), now).unwrap().badge.is_none());
         c.handle(Msg::SessionOpen { session_id: "bbbb2".into(), pid: 0, cwd: "".into() }, now);
@@ -145,16 +158,19 @@ mod tests {
     }
 
     #[test]
-    fn subagent_alerts_off_by_default() {
+    fn disabled_events_are_dropped() {
         let now = Instant::now();
-        let mut c = Core::new(now);
+        let mut c = Core::new(now, Config::default());
         assert!(c.handle(alert("s", Kind::Subagent), now).is_none());
+        c.config.events.stop = false;
+        assert!(c.handle(alert("s", Kind::Done), now).is_none());
+        assert!(c.handle(alert("s", Kind::Idle), now).is_some());
     }
 
     #[test]
     fn exits_after_grace_when_empty() {
         let t0 = Instant::now();
-        let mut c = Core::new(t0);
+        let mut c = Core::new(t0, Config::default());
         c.handle(Msg::SessionOpen { session_id: "s".into(), pid: 0, cwd: "".into() }, t0);
         assert!(!c.tick(t0 + Duration::from_secs(60), false));
         c.handle(Msg::SessionClose { session_id: "s".into() }, t0);
@@ -166,7 +182,7 @@ mod tests {
     #[test]
     fn drops_dead_pids() {
         let t0 = Instant::now();
-        let mut c = Core::new(t0);
+        let mut c = Core::new(t0, Config::default());
         // PID far above any real one: kill(pid, 0) fails with ESRCH.
         c.handle(Msg::SessionOpen { session_id: "s".into(), pid: 4_000_000, cwd: "".into() }, t0);
         c.tick(t0 + Duration::from_secs(31), false);

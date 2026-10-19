@@ -52,6 +52,8 @@ pub enum Msg {
         #[serde(default)]
         ts: u64,
     },
+    /// Re-read config.toml.
+    Reload,
     #[serde(other)]
     Unknown,
 }
