@@ -18,12 +18,12 @@ use protocol::{Kind, Msg};
 
 fn usage() -> ! {
     eprintln!(
-        "usage: clawdpet <command>\n\
+        "usage: clawdtoast <command>\n\
          \x20 hook EVENT        run as a Claude Code hook (reads the hook JSON on stdin)\n\
          \x20 daemon [--headless]\n\
          \x20 test              show one card of each kind\n\
          \x20 reload            make the running daemon re-read config.toml\n\
-         \x20 install [--force] add clawdpet's hooks to ~/.claude/settings.json\n\
+         \x20 install [--force] add clawdtoast's hooks to ~/.claude/settings.json\n\
          \x20 uninstall         remove them again"
     );
     std::process::exit(2);
@@ -51,7 +51,7 @@ fn main() {
 
 fn finish(r: Result<(), String>) {
     if let Err(e) = r {
-        eprintln!("clawdpet: {e}");
+        eprintln!("clawdtoast: {e}");
         std::process::exit(1);
     }
 }
@@ -72,7 +72,7 @@ fn self_test() {
             // Distinct sessions, so the cards stack instead of replacing each other.
             session_id: format!("test{i}"),
             kind,
-            project: "clawdpet".into(),
+            project: "clawdtoast".into(),
             text: text.into(),
             ts: protocol::now_ms(),
         };

@@ -1,19 +1,19 @@
 #!/bin/bash
-# Lifecycle test against a headless daemon. Usage: tests/integration.sh [path/to/clawdpet]
+# Lifecycle test against a headless daemon. Usage: tests/integration.sh [path/to/clawdtoast]
 set -u
-BIN="${1:-target/debug/clawdpet}"
+BIN="${1:-target/debug/clawdtoast}"
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
-export CLAWDPET_DIR="$(mktemp -d)" CLAWDPET_HEADLESS=1 CLAWDPET_MUTE=1 CLAWDPET_GRACE_SECS=1 CLAWDPET_LIVENESS_SECS=1
+export CLAWDTOAST_DIR="$(mktemp -d)" CLAWDTOAST_HEADLESS=1 CLAWDTOAST_MUTE=1 CLAWDTOAST_GRACE_SECS=1 CLAWDTOAST_LIVENESS_SECS=1
 fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
-log() { cat "$CLAWDPET_DIR/clawdpet.log" 2>/dev/null; }
+log() { cat "$CLAWDTOAST_DIR/clawdtoast.log" 2>/dev/null; }
 daemons() { pgrep -f "$BIN daemon" | wc -l | tr -d ' '; }
 
-T="$CLAWDPET_DIR/t.jsonl"
+T="$CLAWDTOAST_DIR/t.jsonl"
 echo '{"message":{"role":"assistant","content":[{"type":"text","text":"Fixed the parser. Added tests."}]}}' > "$T"
 
 sleep 60 & FAKE=$!   # stands in for the Claude Code process
-export CLAWDPET_PID=$FAKE
+export CLAWDTOAST_PID=$FAKE
 
 echo '{"session_id":"aaaa1111","cwd":"/x/proj"}' | "$BIN" hook session-start
 check "shim exits 0 and daemon starts on SessionStart" "[ \$(daemons) -eq 1 ]"
@@ -32,10 +32,10 @@ kill $FAKE 2>/dev/null
 wait $FAKE 2>/dev/null
 sleep 4
 check "daemon exits after fake Claude PID dies (liveness + grace)" "[ \$(daemons) -eq 0 ]"
-check "socket removed on exit" "[ ! -e $CLAWDPET_DIR/clawdpet.sock ]"
+check "socket removed on exit" "[ ! -e $CLAWDTOAST_DIR/clawdtoast.sock ]"
 
 # Concurrent SessionStarts must spawn exactly one daemon.
-unset CLAWDPET_PID
+unset CLAWDTOAST_PID
 for i in 1 2 3 4 5 6; do echo "{\"session_id\":\"s$i\",\"cwd\":\"/x\"}" | "$BIN" hook session-start & done
 wait
 sleep 0.3
@@ -45,35 +45,35 @@ sleep 3
 check "daemon exits after last SessionEnd" "[ \$(daemons) -eq 0 ]"
 
 # Config: events can be switched off, and `reload` applies a changed file to a running daemon.
-export CLAWDPET_CONFIG="$CLAWDPET_DIR/config.toml"
-printf '[events]\nstop = false\n' > "$CLAWDPET_CONFIG"
-export CLAWDPET_PID=$$
+export CLAWDTOAST_CONFIG="$CLAWDTOAST_DIR/config.toml"
+printf '[events]\nstop = false\n' > "$CLAWDTOAST_CONFIG"
+export CLAWDTOAST_PID=$$
 echo '{"session_id":"cfg1","cwd":"/x/cfg"}' | "$BIN" hook session-start
 echo "{\"session_id\":\"cfg1\",\"cwd\":\"/x/cfg\",\"transcript_path\":\"$T\"}" | "$BIN" hook stop
 sleep 0.3
 check "stop=false in config suppresses Done cards" "! log | grep -q 'card: Done · cfg'"
-printf '[events]\nstop = true\n' > "$CLAWDPET_CONFIG"
+printf '[events]\nstop = true\n' > "$CLAWDTOAST_CONFIG"
 "$BIN" reload
 echo "{\"session_id\":\"cfg1\",\"cwd\":\"/x/cfg\",\"transcript_path\":\"$T\"}" | "$BIN" hook stop
 sleep 0.3
 check "reload applies the new config" "log | grep -q 'card: Done · cfg'"
 echo '{"session_id":"cfg1"}' | "$BIN" hook session-end
 sleep 3
-unset CLAWDPET_CONFIG CLAWDPET_PID
+unset CLAWDTOAST_CONFIG CLAWDTOAST_PID
 
 # install / uninstall against a throwaway Claude config dir.
-export CLAUDE_CONFIG_DIR="$CLAWDPET_DIR/claude"
+export CLAUDE_CONFIG_DIR="$CLAWDTOAST_DIR/claude"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}' > "$CLAUDE_CONFIG_DIR/settings.json"
-cp "$CLAUDE_CONFIG_DIR/settings.json" "$CLAWDPET_DIR/orig.json"
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$CLAWDTOAST_DIR/orig.json"
 "$BIN" install >/dev/null
 check "install adds hooks and keeps existing ones" "grep -q 'say done' $CLAUDE_CONFIG_DIR/settings.json && grep -q 'hook session-start' $CLAUDE_CONFIG_DIR/settings.json"
-check "install writes a backup" "ls $CLAUDE_CONFIG_DIR/settings.json.clawdpet-bak-* >/dev/null 2>&1"
+check "install writes a backup" "ls $CLAUDE_CONFIG_DIR/settings.json.clawdtoast-bak-* >/dev/null 2>&1"
 "$BIN" uninstall >/dev/null
 same_json() { python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])) != json.load(open(sys.argv[2])))' "$1" "$2"; }
-check "uninstall restores the original settings" "same_json $CLAUDE_CONFIG_DIR/settings.json $CLAWDPET_DIR/orig.json"
+check "uninstall restores the original settings" "same_json $CLAUDE_CONFIG_DIR/settings.json $CLAWDTOAST_DIR/orig.json"
 unset CLAUDE_CONFIG_DIR
 
 pkill -f "$BIN daemon" 2>/dev/null
-rm -rf "$CLAWDPET_DIR"
+rm -rf "$CLAWDTOAST_DIR"
 exit $fail

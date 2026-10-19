@@ -1,4 +1,4 @@
-//! `~/.config/clawdpet/config.toml`. Every key is optional; unknown keys are ignored.
+//! `~/.config/clawdtoast/config.toml`. Every key is optional; unknown keys are ignored.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -68,11 +68,11 @@ impl Default for Config {
 }
 
 pub fn path() -> PathBuf {
-    if let Some(p) = std::env::var_os("CLAWDPET_CONFIG") {
+    if let Some(p) = std::env::var_os("CLAWDTOAST_CONFIG") {
         return PathBuf::from(p);
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join(".config/clawdpet/config.toml")
+    home.join(".config/clawdtoast/config.toml")
 }
 
 pub fn expand_home(p: &str) -> PathBuf {
@@ -103,13 +103,13 @@ impl Config {
             }),
             Err(_) => Config::default(),
         };
-        if let Some(d) = std::env::var("CLAWDPET_DURATION_SECS").ok().and_then(|v| v.parse().ok()) {
+        if let Some(d) = std::env::var("CLAWDTOAST_DURATION_SECS").ok().and_then(|v| v.parse().ok()) {
             c.duration_secs = d;
         }
-        if std::env::var_os("CLAWDPET_MUTE").is_some() {
+        if std::env::var_os("CLAWDTOAST_MUTE").is_some() {
             c.sound.enabled = false;
         }
-        if std::env::var_os("CLAWDPET_SUBAGENT").is_some() {
+        if std::env::var_os("CLAWDTOAST_SUBAGENT").is_some() {
             c.events.subagent_stop = true;
         }
         c

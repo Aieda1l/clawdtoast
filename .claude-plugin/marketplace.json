@@ -1,10 +1,10 @@
 {
-  "name": "clawdpet",
-  "description": "Clawdpet: a tiny Clawd that tells you which Claude Code session needs you.",
+  "name": "clawdtoast",
+  "description": "Clawdtoast: a tiny Clawd that tells you which Claude Code session needs you.",
   "owner": { "name": "Colin Faletto" },
   "plugins": [
     {
-      "name": "clawdpet",
+      "name": "clawdtoast",
       "source": "./",
       "description": "A tiny Clawd pops up with a chime when Claude Code finishes or needs you (macOS)."
     }

@@ -1,5 +1,5 @@
 {
-  "name": "clawdpet",
+  "name": "clawdtoast",
   "version": "0.1.0",
   "description": "A tiny Clawd pops up in the corner of your screen, with a chime, when Claude Code finishes or needs you.",
   "author": { "name": "Colin Faletto" },

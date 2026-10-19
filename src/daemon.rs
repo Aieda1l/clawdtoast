@@ -1,5 +1,5 @@
-//! `clawdpet daemon`: owns the socket and the session registry. It draws nothing itself; when a
-//! card is due it feeds `clawdpet overlay` (a short-lived child process), so the daemon stays small.
+//! `clawdtoast daemon`: owns the socket and the session registry. It draws nothing itself; when a
+//! card is due it feeds `clawdtoast overlay` (a short-lived child process), so the daemon stays small.
 
 use crate::config::Config;
 use crate::core::{Card, Core};

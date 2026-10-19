@@ -12,10 +12,10 @@ jobs:
       - run: cargo test
       - run: cargo build --release
       - name: Lifecycle tests (headless daemon)
-        run: tests/integration.sh target/release/clawdpet
+        run: tests/integration.sh target/release/clawdtoast
       - name: Resource budgets
         # Overlay checks need a window server; the hosted runner has none we can rely on.
-        run: scripts/check_budgets.sh target/release/clawdpet
+        run: scripts/check_budgets.sh target/release/clawdtoast
       - name: Plugin manifests
         run: |
           python3 -c "import json; [json.load(open(f)) for f in ('.claude-plugin/plugin.json','.claude-plugin/marketplace.json','hooks/hooks.json')]"

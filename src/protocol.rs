@@ -92,7 +92,7 @@ mod tests {
         let m = Msg::Alert {
             session_id: "abc1".into(),
             kind: Kind::Permission,
-            project: "clawdpet".into(),
+            project: "clawdtoast".into(),
             text: "hi".into(),
             ts: 5,
         };

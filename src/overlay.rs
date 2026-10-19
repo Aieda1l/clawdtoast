@@ -1,4 +1,4 @@
-//! `clawdpet overlay`: short-lived UI process. The daemon spawns it when a card is due and feeds
+//! `clawdtoast overlay`: short-lived UI process. The daemon spawns it when a card is due and feeds
 //! it one JSON card per line on stdin. It exits shortly after the last card is gone, so the
 //! always-running daemon never carries AppKit's memory.
 
@@ -127,7 +127,7 @@ impl App {
     fn open(&mut self, el: &ActiveEventLoop, card: Card) {
         let slot = self.shown.len();
         let attrs = Window::default_attributes()
-            .with_title("clawdpet")
+            .with_title("clawdtoast")
             .with_inner_size(LogicalSize::new(render::CARD_W, render::CARD_H))
             .with_decorations(false)
             .with_transparent(true)

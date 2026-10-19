@@ -1,10 +1,10 @@
 #!/bin/sh
-# Launcher the plugin hooks call. Finds the clawdpet binary and execs it. When there is
+# Launcher the plugin hooks call. Finds the clawdtoast binary and execs it. When there is
 # none yet (fresh `/plugin install`), builds it once in the background if cargo is
 # available; hooks are no-ops until then. Always exits 0 so Claude Code is never blocked.
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-for c in "$CLAWDPET_BIN" "$ROOT/bin/clawdpet" "$ROOT/target/release/clawdpet" "$(command -v clawdpet)"; do
+for c in "$CLAWDTOAST_BIN" "$ROOT/bin/clawdtoast" "$ROOT/target/release/clawdtoast" "$(command -v clawdtoast)"; do
   if [ -n "$c" ] && [ -x "$c" ]; then
     exec "$c" "$@"
   fi

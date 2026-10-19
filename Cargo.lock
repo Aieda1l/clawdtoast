@@ -216,7 +216,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "clawdpet"
+name = "clawdtoast"
 version = "0.1.0"
 dependencies = [
  "fontdue",

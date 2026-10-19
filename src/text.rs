@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn transcript_tail() {
-        let dir = std::env::temp_dir().join(format!("clawdpet-t-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("clawdtoast-t-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("t.jsonl");
         std::fs::write(
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn project() {
-        assert_eq!(project_name("/Users/me/ws/clawdpet"), "clawdpet");
+        assert_eq!(project_name("/Users/me/ws/clawdtoast"), "clawdtoast");
         assert_eq!(project_name(""), "claude");
     }
 }

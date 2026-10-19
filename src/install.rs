@@ -1,10 +1,10 @@
-//! `clawdpet install` / `uninstall`: add or remove clawdpet's hooks in `~/.claude/settings.json`
+//! `clawdtoast install` / `uninstall`: add or remove clawdtoast's hooks in `~/.claude/settings.json`
 //! without touching anyone else's. (The Claude Code plugin does the same job without editing settings.)
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-/// (Claude Code event, `clawdpet hook` argument, notification matcher)
+/// (Claude Code event, `clawdtoast hook` argument, notification matcher)
 const HOOKS: [(&str, &str, Option<&str>); 5] = [
     ("SessionStart", "session-start", None),
     ("SessionEnd", "session-end", None),
@@ -14,7 +14,7 @@ const HOOKS: [(&str, &str, Option<&str>); 5] = [
 ];
 
 fn is_ours(cmd: &str) -> bool {
-    cmd.contains("clawdpet") && cmd.contains(" hook ")
+    cmd.contains("clawdtoast") && cmd.contains(" hook ")
 }
 
 fn command_for(exe: &str, arg: &str) -> String {
@@ -25,7 +25,7 @@ fn group_hooks(group: &mut Value) -> Option<&mut Vec<Value>> {
     group.get_mut("hooks")?.as_array_mut()
 }
 
-/// Adds (or re-points) clawdpet's hooks. Returns how many events changed.
+/// Adds (or re-points) clawdtoast's hooks. Returns how many events changed.
 pub fn merge(settings: &mut Value, exe: &str) -> Result<usize, String> {
     let root = settings.as_object_mut().ok_or("settings.json is not a JSON object")?;
     let hooks = root.entry("hooks").or_insert_with(|| json!({}));
@@ -59,7 +59,7 @@ pub fn merge(settings: &mut Value, exe: &str) -> Result<usize, String> {
     Ok(changed)
 }
 
-/// Removes only clawdpet's hook entries, pruning groups and events left empty. Returns the count removed.
+/// Removes only clawdtoast's hook entries, pruning groups and events left empty. Returns the count removed.
 pub fn strip(settings: &mut Value) -> usize {
     let mut removed = 0;
     let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else { return 0 };
@@ -90,14 +90,14 @@ fn claude_dir() -> PathBuf {
 }
 
 fn plugin_installed(dir: &std::path::Path) -> bool {
-    std::fs::read_to_string(dir.join("plugins/installed_plugins.json")).is_ok_and(|s| s.contains("clawdpet@"))
+    std::fs::read_to_string(dir.join("plugins/installed_plugins.json")).is_ok_and(|s| s.contains("clawdtoast@"))
 }
 
 pub fn run(install: bool, force: bool) -> Result<(), String> {
     let dir = claude_dir();
     let path = dir.join("settings.json");
     if install && !force && plugin_installed(&dir) {
-        return Err("the clawdpet plugin is installed; its hooks would fire twice. \
+        return Err("the clawdtoast plugin is installed; its hooks would fire twice. \
             Uninstall the plugin, or pass --force."
             .into());
     }
@@ -116,12 +116,12 @@ pub fn run(install: bool, force: bool) -> Result<(), String> {
         return Ok(());
     }
     if existed {
-        let backup = path.with_extension(format!("json.clawdpet-bak-{}", crate::protocol::now_ms() / 1000));
+        let backup = path.with_extension(format!("json.clawdtoast-bak-{}", crate::protocol::now_ms() / 1000));
         std::fs::copy(&path, &backup).map_err(|e| e.to_string())?;
         println!("backup: {}", backup.display());
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.clawdpet-tmp");
+    let tmp = path.with_extension("json.clawdtoast-tmp");
     let out = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n";
     std::fs::write(&tmp, out).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())?;
     println!("{}: {} hook entr{} {}", path.display(), n, if n == 1 { "y" } else { "ies" }, if install { "added/updated" } else { "removed" });
@@ -132,7 +132,7 @@ pub fn run(install: bool, force: bool) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const EXE: &str = "/opt/bin/clawdpet";
+    const EXE: &str = "/opt/bin/clawdtoast";
 
     fn user_settings() -> Value {
         json!({
@@ -159,9 +159,9 @@ mod tests {
     fn merge_repoints_a_moved_binary() {
         let mut s = json!({});
         merge(&mut s, EXE).unwrap();
-        assert_eq!(merge(&mut s, "/new/clawdpet").unwrap(), 5);
+        assert_eq!(merge(&mut s, "/new/clawdtoast").unwrap(), 5);
         assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 1);
-        assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "\"/new/clawdpet\" hook stop");
+        assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "\"/new/clawdtoast\" hook stop");
     }
 
     #[test]

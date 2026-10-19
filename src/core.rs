@@ -51,13 +51,13 @@ fn env_secs(name: &str, default: u64) -> Duration {
 
 impl Core {
     pub fn new(now: Instant, config: Config) -> Core {
-        let liveness = env_secs("CLAWDPET_LIVENESS_SECS", 30);
+        let liveness = env_secs("CLAWDTOAST_LIVENESS_SECS", 30);
         Core {
             sessions: HashMap::new(),
             empty_since: Some(now),
             last_activity: now,
             next_liveness: now + liveness,
-            grace: env_secs("CLAWDPET_GRACE_SECS", 10),
+            grace: env_secs("CLAWDTOAST_GRACE_SECS", 10),
             liveness,
             config,
         }

@@ -1,4 +1,4 @@
-//! `clawdpet hook <event>`: runs inside Claude Code's hook machinery. Always exits 0, prints nothing.
+//! `clawdtoast hook <event>`: runs inside Claude Code's hook machinery. Always exits 0, prints nothing.
 
 use crate::protocol::{self, Kind, Msg};
 use crate::{log, paths, text};
@@ -116,7 +116,7 @@ fn spawn_daemon() -> Result<(), String> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if std::env::var_os("CLAWDPET_HEADLESS").is_some() {
+    if std::env::var_os("CLAWDTOAST_HEADLESS").is_some() {
         cmd.arg("--headless");
     }
     unsafe {
@@ -131,7 +131,7 @@ fn spawn_daemon() -> Result<(), String> {
 /// PID of the Claude Code process: the nearest ancestor whose command name mentions "claude".
 /// 0 (no liveness check) when none is found; the 24h idle backstop still applies.
 fn claude_pid() -> u32 {
-    if let Some(p) = std::env::var("CLAWDPET_PID").ok().and_then(|p| p.parse().ok()) {
+    if let Some(p) = std::env::var("CLAWDTOAST_PID").ok().and_then(|p| p.parse().ok()) {
         return p;
     }
     let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid=,comm="]).output() else {
