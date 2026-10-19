@@ -18,6 +18,7 @@ use winit::window::{Window, WindowId, WindowLevel};
 const FADE_IN: Duration = Duration::from_millis(150);
 const FADE_OUT: Duration = Duration::from_millis(300);
 const FRAME: Duration = Duration::from_millis(16);
+const WAVE_FRAME: Duration = Duration::from_millis(125); // 8 fps
 
 pub fn run(headless: bool) {
     let listener = match bind() {
@@ -126,6 +127,7 @@ struct Shown {
     card: Card,
     shown_at: Instant,
     hover_since: Option<Instant>,
+    frame: usize,
 }
 
 struct App {
@@ -154,6 +156,7 @@ impl App {
             s.card = card;
             s.shown_at = now;
             s.hover_since = None;
+            s.frame = 0;
             draw(self.assets.get_or_insert_with(render::Assets::load), s);
             return;
         }
@@ -177,7 +180,7 @@ impl App {
         };
         crate::macos::set_alpha(&window, 0.0);
         crate::macos::configure(&window, render::CARD_W, render::CARD_H);
-        let mut shown = Shown { window, surface, card, shown_at: now, hover_since: None };
+        let mut shown = Shown { window, surface, card, shown_at: now, hover_since: None, frame: 0 };
         draw(self.assets.get_or_insert_with(render::Assets::load), &mut shown);
         if shown.card.ts > 0 {
             log::line(&format!("latency_ms={}", protocol::now_ms().saturating_sub(shown.card.ts)));
@@ -211,7 +214,7 @@ fn draw(assets: &render::Assets, s: &mut Shown) {
     let (Some(w), Some(h)) = (std::num::NonZeroU32::new(size.width), std::num::NonZeroU32::new(size.height)) else {
         return;
     };
-    let pixels = render::render(&s.card, assets, size.width, size.height, s.window.scale_factor());
+    let pixels = render::render(&s.card, assets, s.frame, size.width, size.height, s.window.scale_factor());
     if s.surface.resize(w, h).is_err() {
         return;
     }
@@ -263,15 +266,22 @@ impl ApplicationHandler<Msg> for App {
             match self.alpha(now) {
                 None => self.dismiss("timeout"),
                 Some(a) => {
-                    if let Some(s) = &self.shown {
+                    let assets = self.assets.get_or_insert_with(render::Assets::load);
+                    if let Some(s) = &mut self.shown {
                         crate::macos::set_alpha(&s.window, a);
                         let t = s.hover_since.unwrap_or(now).saturating_duration_since(s.shown_at);
+                        let frame = (t.as_millis() / WAVE_FRAME.as_millis()) as usize % assets.frames();
+                        if frame != s.frame {
+                            s.frame = frame;
+                            draw(assets, s);
+                        }
                         if s.hover_since.is_some() && t >= FADE_IN && t < self.duration {
                             // Paused while hovered: wake only on pointer events (or the core timers).
                         } else if t < FADE_IN || t >= self.duration {
                             next = next.min(now + FRAME);
                         } else {
-                            next = next.min(s.shown_at + self.duration);
+                            let to_frame = WAVE_FRAME - Duration::from_millis((t.as_millis() % WAVE_FRAME.as_millis()) as u64);
+                            next = next.min(now + to_frame).min(s.shown_at + self.duration);
                         }
                     }
                 }

@@ -18,6 +18,7 @@ const FONT_CANDIDATES: &[(&str, usize)] = &[
 ];
 const BOLD_CANDIDATES: &[(&str, usize)] = &[("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0)];
 
+/// A sheet of square frames laid out left to right; frame size is the image height.
 pub struct Sprite {
     w: usize,
     h: usize,
@@ -49,7 +50,17 @@ fn load_sprite() -> Option<Sprite> {
     })
 }
 
+impl Sprite {
+    pub fn frames(&self) -> usize {
+        (self.w / self.h).max(1)
+    }
+}
+
 impl Assets {
+    pub fn frames(&self) -> usize {
+        self.sprite.as_ref().map_or(1, Sprite::frames)
+    }
+
     pub fn load() -> Assets {
         let regular = load_font(FONT_CANDIDATES);
         let bold = load_font(BOLD_CANDIDATES).or_else(|| load_font(FONT_CANDIDATES));
@@ -143,8 +154,8 @@ fn wrap(font: &Font, s: &str, px: f32, max_w: f32, max_lines: usize) -> Vec<Stri
     lines
 }
 
-/// Renders a card at `scale` into premultiplied 0xAARRGGBB pixels (`w * h` of them).
-pub fn render(card: &Card, assets: &Assets, w: u32, h: u32, scale: f64) -> Vec<u32> {
+/// Renders a card at `scale`, showing sprite sheet frame `frame` (wraps). into premultiplied 0xAARRGGBB pixels (`w * h` of them).
+pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale: f64) -> Vec<u32> {
     let mut pm = Pixmap::new(w.max(1), h.max(1)).expect("pixmap");
     let s = scale as f32;
     let (fw, fh) = (w as f32, h as f32);
@@ -162,12 +173,13 @@ pub fn render(card: &Card, assets: &Assets, w: u32, h: u32, scale: f64) -> Vec<u
     if let Some(sp) = &assets.sprite {
         // Whole-number upscale keeps the pixel art crisp.
         let k = ((2.0 * scale).round() as usize).max(1);
-        let (ox, oy) = ((16.0 * s) as usize, ((CARD_H as f32 * s) as usize - sp.h * k) / 2);
+        let (ox, oy) = ((16.0 * s) as usize, ((CARD_H as f32 * s) as usize).saturating_sub(sp.h * k) / 2);
+        let frame_off = (frame % sp.frames()) * sp.h;
         let (pw, ph) = (pm.width() as usize, pm.height() as usize);
         let data = pm.data_mut();
         for y in 0..sp.h * k {
-            for x in 0..sp.w * k {
-                let si = ((y / k) * sp.w + x / k) * 4;
+            for x in 0..sp.h * k {
+                let si = ((y / k) * sp.w + frame_off + x / k) * 4;
                 let a = sp.rgba[si + 3] as u32;
                 let (dx, dy) = (ox + x, oy + y);
                 if a == 0 || dx >= pw || dy >= ph {

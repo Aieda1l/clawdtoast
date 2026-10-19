@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generates assets/clawd.png (placeholder Clawd sprite) and the two chimes.
+"""Generates assets/clawd.png (placeholder Clawd wave sheet, 4 frames side by side) and the two chimes.
 
-Replace assets/clawd.png with the real artwork; the daemon only needs a
-32x32 RGBA PNG. Run: python3 -I tools/gen_assets.py
+Replace assets/clawd.png with the real artwork; the daemon needs a
+sheet of square RGBA frames side by side (frame size = image height). Run: python3 -I tools/gen_assets.py
 """
 import math, struct, wave, zlib, pathlib
 
@@ -11,7 +11,7 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "assets"
 ORANGE = (0xD9, 0x77, 0x57, 255)
 EYE = (0x1F, 0x1A, 0x17, 255)
 
-# 16x16 design, upscaled 2x to the 32x32 sprite. O = body, E = eye.
+# 16x16 design, upscaled 2x to a 32x32 frame. O = body, E = eye. The right arm is added per frame.
 ART = [
     "................",
     "................",
@@ -21,8 +21,8 @@ ART = [
     "..OOOEOOOOEOOO..",
     "..OOOEOOOOEOOO..",
     "..OOOOOOOOOOOO..",
-    "OOOOOOOOOOOOOOOO",
-    "OOOOOOOOOOOOOOOO",
+    "OOOOOOOOOOOOOO..",
+    "OOOOOOOOOOOOOO..",
     "..OOOOOOOOOOOO..",
     "..OOOOOOOOOOOO..",
     "..O.O......O.O..",
@@ -30,8 +30,8 @@ ART = [
     "................",
     "................",
 ]
-
-
+# Top row of the raised right arm (3 rows tall) in each of the 4 wave frames.
+WAVE = [5, 3, 5, 3]
 def write_png(path, w, h, rgba):
     raw = b"".join(b"\x00" + bytes(rgba[y * w * 4:(y + 1) * w * 4]) for y in range(h))
 
@@ -47,17 +47,23 @@ def write_png(path, w, h, rgba):
 
 
 def sprite():
-    px = bytearray(32 * 32 * 4)
-    for y, row in enumerate(ART):
-        for x, c in enumerate(row):
-            color = {"O": ORANGE, "E": EYE}.get(c)
-            if not color:
-                continue
-            for dy in (0, 1):
-                for dx in (0, 1):
-                    i = ((y * 2 + dy) * 32 + x * 2 + dx) * 4
-                    px[i:i + 4] = bytes(color)
-    write_png(OUT / "clawd.png", 32, 32, px)
+    """Horizontal sheet: len(WAVE) frames of 32x32."""
+    n = len(WAVE)
+    px = bytearray(32 * n * 32 * 4)
+    for f, top in enumerate(WAVE):
+        art = [list(r) for r in ART]
+        for y in range(top, top + 3):
+            art[y][14] = art[y][15] = "O"
+        for y, row in enumerate(art):
+            for x, c in enumerate(row):
+                color = {"O": ORANGE, "E": EYE}.get(c)
+                if not color:
+                    continue
+                for dy in (0, 1):
+                    for dx in (0, 1):
+                        i = ((y * 2 + dy) * 32 * n + f * 32 + x * 2 + dx) * 4
+                        px[i:i + 4] = bytes(color)
+    write_png(OUT / "clawd.png", 32 * n, 32, px)
 
 
 def tone(notes, path, rate=22050):
