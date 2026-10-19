@@ -19,6 +19,11 @@ pub fn run(event: &str) {
 fn handle(event: &str) -> Result<(), String> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).map_err(|e| e.to_string())?;
+    // Over SSH or on a bare VT there is no screen to draw on: do nothing, start no daemon.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("CLAWDTOAST_HEADLESS").is_none() && !crate::backend::has_display(|k| std::env::var(k).ok()) {
+        return Ok(());
+    }
     let v: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
     let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
     let session_id = s("session_id");
@@ -80,7 +85,7 @@ pub fn ensure_daemon() -> Result<(), String> {
     if connect_ok() {
         return Ok(());
     }
-    let _ = std::fs::create_dir_all(paths::support_dir());
+    let _ = std::fs::create_dir_all(paths::runtime_dir());
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .write(true)

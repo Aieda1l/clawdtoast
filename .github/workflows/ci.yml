@@ -19,3 +19,35 @@ jobs:
       - name: Plugin manifests
         run: |
           python3 -c "import json; [json.load(open(f)) for f in ('.claude-plugin/plugin.json','.claude-plugin/marketplace.json','hooks/hooks.json')]"
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Packages
+        # Same set as tests/linux/Dockerfile.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev fonts-dejavu-core \
+            xvfb x11-utils x11-apps xdotool imagemagick xcompmgr sway grim \
+            libx11-6 libx11-xcb1 libxcursor1 libxi6 libxrandr2 libxkbcommon0 libxkbcommon-x11-0
+      - run: cargo test
+      - run: cargo build --release
+      - name: Lifecycle tests (headless daemon)
+        run: tests/integration.sh target/release/clawdtoast
+      - name: Resource budgets
+        run: scripts/check_budgets.sh target/release/clawdtoast
+      - name: X11 overlay (Xvfb)
+        run: tests/linux/x11.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
+      - name: X11 overlay with a compositor
+        run: tests/linux/x11.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots" compositor
+      - name: Wayland overlay (headless sway)
+        run: tests/linux/wayland.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
+      - name: Notification fallback and no-display behaviour
+        run: tests/linux/fallback.sh "$PWD/target/release/clawdtoast"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-screenshots
+          path: ${{ runner.temp }}/shots

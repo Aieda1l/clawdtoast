@@ -20,7 +20,7 @@ pub fn run(headless: bool) {
 }
 
 fn bind() -> Option<UnixListener> {
-    let dir = paths::support_dir();
+    let dir = paths::runtime_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     let sock = paths::socket();

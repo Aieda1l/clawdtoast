@@ -1,6 +1,6 @@
 # clawdtoast
 
-A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code finishes a turn or needs you. It runs only while a Claude Code session is open. This repo is at **M1** (macOS); see the design doc for the plan.
+A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code finishes a turn or needs you. It runs only while a Claude Code session is open. This repo is at **M3**: macOS and Linux (X11 and Wayland). Windows (M2) is not started; see the design doc for the plan.
 
 ## Install
 
@@ -22,6 +22,21 @@ target/release/clawdtoast uninstall    # removes only clawdtoast's entries
 ```
 
 `install` refuses to run while the plugin is installed (the hooks would fire twice) unless you pass `--force`. Try it any time with `clawdtoast test`, which shows one card of each kind.
+
+### Linux
+
+Build needs `pkg-config` and the ALSA headers (`libasound2-dev` on Debian/Ubuntu, `alsa-lib-devel` on Fedora) for the sound output; running needs a TrueType sans font (DejaVu, Liberation or Noto, or anything `fc-match sans` finds) and, for sound, ALSA/PipeWire/PulseAudio.
+
+How a card is shown depends on the session:
+
+| Session | How | Notes |
+|---|---|---|
+| X11 | Override-redirect window, so no window manager can focus, frame or tile it | Placed on the monitor under the pointer, inside the panel-free work area (`_NET_WORKAREA`). Fades need a compositor; without one the card is drawn opaque and just appears and disappears. Click focuses the window that owns an ancestor PID of the Claude Code process (`_NET_ACTIVE_WINDOW`); terminals that run every window in one server process (gnome-terminal) are not found, and the click then only dismisses. |
+| Wayland with `wlr-layer-shell` (sway, Hyprland, river, KDE, COSMIC, ...) | A layer surface on the overlay layer, no keyboard interactivity | The compositor picks the output (Wayland gives clients no pointer position). Click dismisses; Wayland cannot raise another client's window. |
+| Wayland without it (GNOME) | A desktop notification through `notify-send`, or `gdbus` if that is missing | No Clawd animation; the desktop owns placement and timing. A new alert for a session replaces its previous notification where the notification daemon supports it. |
+| No display (SSH, a bare VT) | Nothing: the hook exits at once and starts no daemon | |
+
+`CLAWDTOAST_BACKEND=wayland|x11|notify` forces a path (the others stay as fallbacks), for testing or desktops that misreport themselves. The socket and lock live in `$XDG_RUNTIME_DIR/clawdtoast/`; the log is `~/.local/state/clawdtoast/clawdtoast.log`.
 
 ## What it does
 
@@ -59,7 +74,7 @@ idle_prompt = true
 subagent_stop = false
 ```
 
-Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir, default `~/Library/Application Support/clawdtoast`), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). Log: `clawdtoast.log` in the support dir.
+Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir, default `~/Library/Application Support/clawdtoast`; on Linux the socket and lock default to `$XDG_RUNTIME_DIR/clawdtoast` and the log to `~/.local/state/clawdtoast`), `CLAWDTOAST_BACKEND` (Linux only, see above), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). Log: `clawdtoast.log` in the support dir.
 
 ## Development
 
@@ -71,7 +86,9 @@ python3 -I tools/gen_assets.py      # regenerate assets/ (sprite sheet + sounds)
 scripts/release.sh                  # universal binary in dist/, signed (see below)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the first three on macOS.
+CI (`.github/workflows/ci.yml`) runs the first three on macOS, and on Ubuntu those plus the display scenarios below.
+
+The Linux display scenarios (`tests/linux/x11.sh`, `wayland.sh`, `fallback.sh`) drive a real Xvfb and a headless sway and check windows and screenshot pixels. On a Mac, `tests/linux/run.sh [test|lifecycle|budgets|x11|x11-comp|wayland|fallback|all]` builds the binary in a Linux container (Docker or colima) and runs them; screenshots land in `target/linux-shots/`.
 
 ### Budgets
 
@@ -90,6 +107,10 @@ The design doc's 8 MB / 20 MB assumed one process doing everything; AppKit alone
 `scripts/release.sh` builds arm64 + x86_64, joins them with `lipo`, signs, and zips. With `CODESIGN_IDENTITY="Developer ID Application: ..."` it signs for distribution, and with `NOTARY_PROFILE` it submits to Apple's notary service. **Only the ad-hoc path has been run**: no Developer ID certificate was available when this was written, so signing with one and notarizing are untested.
 
 ## Known gaps
+
+- **Linux coverage:** verified against Xvfb (with and without `xcompmgr`) and headless sway in a container: placement, stacking, timeout, config position, the notification fallback, no-display behaviour and lifecycle. Overlay memory there is about 44 MB with 3 cards (45 MB X11, 44 MB Wayland; the 90 MB budget is shared with macOS). **Not tested:** a real GNOME, KDE or Hyprland session, multiple monitors, HiDPI scaling, pointer hover and click (the headless setups have no pointer), the click-to-focus path (`x11::focus_pid`), the fade look under a real compositor, and a real notification daemon (a stub `notify-send` stands in). A Linux desktop session is the next thing to try.
+- **Linux fonts:** same as macOS, loaded from the system at runtime (DejaVu, Liberation, Noto, else `fc-match sans`). DejaVu is wider than Arial, so long titles cut off sooner.
+- **Linux X11 libraries:** winit loads `libX11`, `libXcursor`, `libXi`, `libXrandr` and `libxkbcommon(-x11)` at runtime. If one is missing the overlay logs it and falls back to notifications instead of crashing.
 
 - **Font:** loads Arial from the system at runtime; embedding an open-licensed subset is still open.
 - **Do Not Disturb / Focus muting** (design doc config key `mute_in_focus_mode`) is not implemented; macOS exposes no public API for it.

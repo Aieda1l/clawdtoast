@@ -1,7 +1,11 @@
 //! `clawdtoast overlay`: short-lived UI process. The daemon spawns it when a card is due and feeds
 //! it one JSON card per line on stdin. It exits shortly after the last card is gone, so the
-//! always-running daemon never carries AppKit's memory.
+//! always-running daemon never carries AppKit's (or Xlib's) memory.
+//!
+//! macOS and X11 draw through winit; Wayland uses wlr-layer-shell directly (`wayland.rs`), and
+//! compositors without it get a desktop notification (`notify.rs`).
 
+use crate::anim::{Timing, IDLE_EXIT};
 use crate::config::{Config, Position};
 use crate::core::Card;
 use crate::stack::{Offer, Stack};
@@ -13,43 +17,109 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::window::{Window, WindowId, WindowLevel};
 
-const FADE_IN: Duration = Duration::from_millis(150);
-const FADE_OUT: Duration = Duration::from_millis(300);
-const FRAME: Duration = Duration::from_millis(16);
-const WAVE_FRAME: Duration = Duration::from_millis(125); // 8 fps
-const IDLE_EXIT: Duration = Duration::from_secs(3);
+#[cfg(target_os = "linux")]
+use crate::x11 as platform;
+#[cfg(target_os = "macos")]
+use crate::macos as platform;
 
 enum Ev {
     Card(Card),
     Eof,
 }
 
+/// Calls `f` with each card the daemon writes to stdin until EOF, or until `f` returns false.
+pub fn read_cards(mut f: impl FnMut(Card) -> bool) {
+    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+        match serde_json::from_str::<Card>(&line) {
+            Ok(card) => {
+                if !f(card) {
+                    return;
+                }
+            }
+            Err(e) => log::line(&format!("overlay: bad card: {e}")),
+        }
+    }
+}
+
+/// For overlays with no window of their own: calls `f` for each card, and returns once no card
+/// has arrived for `IDLE_EXIT` or the daemon closed stdin. The daemon waits for its overlay to
+/// exit before it does, so an overlay that only stopped at EOF would deadlock with it.
+pub fn serve_cards(mut f: impl FnMut(Card)) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || read_cards(|card| tx.send(card).is_ok()));
+    while let Ok(card) = rx.recv_timeout(IDLE_EXIT) {
+        f(card);
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub fn run() {
-    let event_loop = match EventLoop::<Ev>::with_user_event()
-        .with_activation_policy(ActivationPolicy::Accessory)
-        .with_default_menu(false)
-        // winit otherwise activates the app at launch, which steals focus from whatever you're using.
-        .with_activate_ignoring_other_apps(false)
-        .build()
+    run_winit();
+}
+
+#[cfg(target_os = "linux")]
+pub fn run() {
+    use crate::backend::{self, Backend};
+    for b in backend::order(|k| std::env::var(k).ok()) {
+        match b {
+            Backend::Wayland => match crate::wayland::run() {
+                Ok(()) => return,
+                Err(e) => log::line(&format!("overlay: wayland: {e}")),
+            },
+            Backend::X11 => {
+                if run_winit() {
+                    return;
+                }
+            }
+            Backend::Notify => {
+                crate::notify::run();
+                return;
+            }
+        }
+    }
+    // No display at all (SSH, a bare VT): nothing to draw on. Keep reading so the daemon's writes
+    // succeed instead of respawning us for every card.
+    log::line("overlay: no display");
+    serve_cards(|_| {});
+}
+
+fn event_loop() -> Result<EventLoop<Ev>, winit::error::EventLoopError> {
+    #[allow(unused_mut)]
+    let mut builder = EventLoop::<Ev>::with_user_event();
+    #[cfg(target_os = "macos")]
     {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder
+            .with_activation_policy(ActivationPolicy::Accessory)
+            .with_default_menu(false)
+            // winit otherwise activates the app at launch, which steals focus from whatever you're using.
+            .with_activate_ignoring_other_apps(false);
+    }
+    builder.build()
+}
+
+/// Runs the winit overlay; false if the event loop could not start (no usable display).
+fn run_winit() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let missing = platform::missing_libs();
+        if !missing.is_empty() {
+            log::line(&format!("overlay: X11 libraries not installed: {}", missing.join(", ")));
+            return false;
+        }
+    }
+    let event_loop = match event_loop() {
         Ok(l) => l,
-        Err(e) => return log::line(&format!("overlay: event loop: {e}")),
+        Err(e) => {
+            log::line(&format!("overlay: event loop: {e}"));
+            return false;
+        }
     };
     let proxy = event_loop.create_proxy();
     std::thread::spawn(move || {
-        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-            match serde_json::from_str::<Card>(&line) {
-                Ok(card) => {
-                    if proxy.send_event(Ev::Card(card)).is_err() {
-                        return;
-                    }
-                }
-                Err(e) => log::line(&format!("overlay: bad card: {e}")),
-            }
-        }
+        read_cards(|card| proxy.send_event(Ev::Card(card)).is_ok());
         let _ = proxy.send_event(Ev::Eof);
     });
     let cfg = Config::load();
@@ -61,40 +131,31 @@ pub fn run() {
         assets: None,
         eof: false,
         idle_since: None,
+        opaque: opaque_cards(),
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         log::line(&format!("overlay: run_app: {e}"));
     }
+    true
+}
+
+/// True when the screen has no compositor, so a transparent window would show garbage corners.
+#[cfg(target_os = "linux")]
+fn opaque_cards() -> bool {
+    !platform::compositor_running()
+}
+
+#[cfg(target_os = "macos")]
+fn opaque_cards() -> bool {
+    false
 }
 
 struct Shown {
     window: Arc<Window>,
     surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
     card: Card,
-    shown_at: Instant,
-    hover_since: Option<Instant>,
+    timing: Timing,
     frame: usize,
-}
-
-impl Shown {
-    /// Time on screen so far, frozen while the pointer hovers.
-    fn age(&self, now: Instant) -> Duration {
-        self.hover_since.unwrap_or(now).saturating_duration_since(self.shown_at)
-    }
-
-    /// Opacity now, or None once the card has faded out.
-    fn alpha(&self, now: Instant, hold: Duration) -> Option<f64> {
-        let t = self.age(now);
-        if t < FADE_IN {
-            Some(t.as_secs_f64() / FADE_IN.as_secs_f64())
-        } else if t < hold {
-            Some(1.0)
-        } else if t < hold + FADE_OUT {
-            Some(1.0 - (t - hold).as_secs_f64() / FADE_OUT.as_secs_f64())
-        } else {
-            None
-        }
-    }
 }
 
 struct App {
@@ -105,14 +166,18 @@ struct App {
     assets: Option<render::Assets>,
     eof: bool,
     idle_since: Option<Instant>,
+    opaque: bool,
 }
 
-fn draw(assets: &render::Assets, s: &mut Shown) {
+fn draw(assets: &render::Assets, s: &mut Shown, opaque: bool) {
     let size = s.window.inner_size();
     let (Some(w), Some(h)) = (std::num::NonZeroU32::new(size.width), std::num::NonZeroU32::new(size.height)) else {
         return;
     };
-    let pixels = render::render(&s.card, assets, s.frame, size.width, size.height, s.window.scale_factor());
+    let mut pixels = render::render(&s.card, assets, s.frame, size.width, size.height, s.window.scale_factor());
+    if opaque {
+        render::flatten(&mut pixels);
+    }
     if s.surface.resize(w, h).is_err() {
         return;
     }
@@ -130,10 +195,20 @@ impl App {
             .with_title("clawdtoast")
             .with_inner_size(LogicalSize::new(render::CARD_W, render::CARD_H))
             .with_decorations(false)
-            .with_transparent(true)
+            .with_transparent(!self.opaque)
             .with_resizable(false)
             .with_active(false)
             .with_window_level(WindowLevel::AlwaysOnTop);
+        #[cfg(target_os = "linux")]
+        let attrs = {
+            use winit::platform::x11::{WindowAttributesExtX11, WindowType};
+            // Override-redirect: the window manager never sees it, so it cannot take focus, get a
+            // frame, or be tiled. It is mapped by `configure` once placed.
+            attrs
+                .with_override_redirect(true)
+                .with_x11_window_type(vec![WindowType::Notification])
+                .with_visible(false)
+        };
         let window = match el.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => return log::line(&format!("create_window: {e}")),
@@ -144,10 +219,11 @@ impl App {
             Ok(s) => s,
             Err(e) => return log::line(&format!("softbuffer: {e}")),
         };
-        crate::macos::set_alpha(&window, 0.0);
-        crate::macos::configure(&window, render::CARD_W, render::CARD_H, slot, self.position);
-        let mut s = Shown { window, surface, card, shown_at: Instant::now(), hover_since: None, frame: 0 };
-        draw(self.assets.get_or_insert_with(render::Assets::load), &mut s);
+        platform::set_alpha(&window, 0.0);
+        let mut s = Shown { window, surface, card, timing: Timing::new(), frame: 0 };
+        // Draw before the window is shown so the first visible frame is not blank.
+        draw(self.assets.get_or_insert_with(render::Assets::load), &mut s, self.opaque);
+        platform::configure(&s.window, render::CARD_W, render::CARD_H, slot, self.position);
         if s.card.ts > 0 {
             log::line(&format!("latency_ms={}", protocol::now_ms().saturating_sub(s.card.ts)));
         }
@@ -162,7 +238,7 @@ impl App {
             self.open(el, next);
         }
         for (i, s) in self.shown.iter().enumerate().skip(idx) {
-            crate::macos::place(&s.window, render::CARD_W, render::CARD_H, i, self.position);
+            platform::place(&s.window, render::CARD_W, render::CARD_H, i, self.position);
         }
     }
 
@@ -188,10 +264,9 @@ impl ApplicationHandler<Ev> for App {
             Offer::Replace(i) => {
                 let s = &mut self.shown[i];
                 s.card = card;
-                s.shown_at = Instant::now();
-                s.hover_since = None;
+                s.timing.restart();
                 s.frame = 0;
-                draw(self.assets.get_or_insert_with(render::Assets::load), s);
+                draw(self.assets.get_or_insert_with(render::Assets::load), s, self.opaque);
             }
             Offer::Queued => {}
         }
@@ -201,19 +276,14 @@ impl ApplicationHandler<Ev> for App {
         let Some(i) = self.index_of(id) else { return };
         match event {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                crate::macos::focus_pid(self.shown[i].card.pid);
+                platform::focus_pid(self.shown[i].card.pid);
                 self.remove(el, i, "click")
             }
-            WindowEvent::CursorEntered { .. } => self.shown[i].hover_since = Some(Instant::now()),
-            WindowEvent::CursorLeft { .. } => {
-                let s = &mut self.shown[i];
-                if let Some(h) = s.hover_since.take() {
-                    s.shown_at += h.elapsed(); // time spent hovering does not count
-                }
-            }
+            WindowEvent::CursorEntered { .. } => self.shown[i].timing.hover(true),
+            WindowEvent::CursorLeft { .. } => self.shown[i].timing.hover(false),
             WindowEvent::RedrawRequested => {
                 if let Some(a) = self.assets.as_ref() {
-                    draw(a, &mut self.shown[i]);
+                    draw(a, &mut self.shown[i], self.opaque);
                 }
             }
             _ => {}
@@ -225,7 +295,7 @@ impl ApplicationHandler<Ev> for App {
         let hold = self.duration;
 
         let expired: Vec<usize> =
-            (0..self.shown.len()).filter(|&i| self.shown[i].alpha(now, hold).is_none()).collect();
+            (0..self.shown.len()).filter(|&i| self.shown[i].timing.alpha(now, hold).is_none()).collect();
         for i in expired.into_iter().rev() {
             self.remove(el, i, "timeout");
         }
@@ -233,22 +303,15 @@ impl ApplicationHandler<Ev> for App {
         let mut next = now + Duration::from_secs(3600);
         let assets = self.assets.get_or_insert_with(render::Assets::load);
         for s in self.shown.iter_mut() {
-            let Some(a) = s.alpha(now, hold) else { continue };
-            crate::macos::set_alpha(&s.window, a);
-            let t = s.age(now);
-            let frame = (t.as_millis() / WAVE_FRAME.as_millis()) as usize % assets.frames();
+            let Some(a) = s.timing.alpha(now, hold) else { continue };
+            platform::set_alpha(&s.window, a);
+            let frame = s.timing.wave_frame(now, assets.frames());
             if frame != s.frame {
                 s.frame = frame;
-                draw(assets, s);
+                draw(assets, s, self.opaque);
             }
-            if s.hover_since.is_some() && t >= FADE_IN && t < hold {
-                continue; // paused while hovered: wake only on pointer events
-            }
-            if t < FADE_IN || t >= hold {
-                next = next.min(now + FRAME);
-            } else {
-                let to_frame = WAVE_FRAME - Duration::from_millis((t.as_millis() % WAVE_FRAME.as_millis()) as u64);
-                next = next.min(now + to_frame).min(s.shown_at + hold);
+            if let Some(wake) = s.timing.next_wake(now, hold) {
+                next = next.min(wake);
             }
         }
 
