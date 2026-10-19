@@ -30,7 +30,7 @@ ART = [
     "................",
     "................",
 ]
-# Top row of the raised right arm (3 rows tall) in each of the 4 wave frames.
+# Top row of the raised right arm (2 rows tall, like the left arm) in each of the 4 wave frames.
 WAVE = [5, 3, 5, 3]
 def write_png(path, w, h, rgba):
     raw = b"".join(b"\x00" + bytes(rgba[y * w * 4:(y + 1) * w * 4]) for y in range(h))
@@ -52,7 +52,7 @@ def sprite():
     px = bytearray(32 * n * 32 * 4)
     for f, top in enumerate(WAVE):
         art = [list(r) for r in ART]
-        for y in range(top, top + 3):
+        for y in range(top, top + 2):
             art[y][14] = art[y][15] = "O"
         for y, row in enumerate(art):
             for x, c in enumerate(row):
