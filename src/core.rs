@@ -21,6 +21,9 @@ pub struct Card {
     /// Short session tag, set only when more than one session is open.
     pub badge: Option<String>,
     pub ts: u64,
+    /// PID of the Claude Code process, used to focus its terminal on click; 0 when unknown.
+    #[serde(default)]
+    pub pid: u32,
 }
 
 impl Card {
@@ -91,8 +94,9 @@ impl Core {
                     self.sessions.insert(session_id.clone(), Session { pid: 0 });
                     self.empty_since = None;
                 }
+                let pid = self.sessions.get(&session_id).map_or(0, |s| s.pid);
                 let badge = (self.sessions.len() > 1).then(|| session_id.chars().take(4).collect());
-                Some(Card { session_id, kind, project, body: text, badge, ts })
+                Some(Card { session_id, kind, project, body: text, badge, ts, pid })
             }
             Msg::Reload => {
                 self.config = Config::load();

@@ -2,9 +2,10 @@
 
 use crate::config::Position;
 use objc2::rc::Retained;
+use objc2::ClassType;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
 use objc2::sel;
-use objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
+use objc2_app_kit::{NSEvent, NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
 use objc2_foundation::{MainThreadMarker, NSPoint};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -110,4 +111,39 @@ pub fn set_alpha(w: &Window, alpha: f64) {
     if let Some(win) = ns_window(w) {
         unsafe { win.setAlphaValue(alpha) };
     }
+}
+
+/// Brings forward the app that hosts the Claude Code process `pid`: the nearest ancestor (or the
+/// process itself) that is a regular GUI app, i.e. the terminal or IDE. No-op when `pid` is 0 or
+/// no ancestor is an app.
+pub fn focus_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid="]).output() else { return };
+    let parents: std::collections::HashMap<i32, i32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut cur = pid as i32;
+    for _ in 0..32 {
+        let app: Option<Retained<NSRunningApplication>> = unsafe {
+            objc2::msg_send_id![NSRunningApplication::class(), runningApplicationWithProcessIdentifier: cur]
+        };
+        if let Some(app) = app {
+            // `activate` is a no-op for a background app on macOS 14+; LaunchServices is not.
+            if let Some(id) = unsafe { app.bundleIdentifier() } {
+                let _ = std::process::Command::new("open").args(["-b", &id.to_string()]).spawn();
+                return;
+            }
+        }
+        match parents.get(&cur) {
+            Some(&p) if p > 1 => cur = p,
+            _ => break,
+        }
+    }
+    crate::log::line(&format!("macos: no app found above pid {pid}"));
 }

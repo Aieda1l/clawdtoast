@@ -20,8 +20,8 @@ toml = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
-objc2-foundation = { version = "0.2", features = ["NSGeometry", "NSArray", "NSThread"] }
-objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSView", "NSResponder", "NSScreen", "NSEvent", "NSGraphics"] }
+objc2-foundation = { version = "0.2", features = ["NSGeometry", "NSArray", "NSThread", "NSString"] }
+objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSView", "NSResponder", "NSScreen", "NSEvent", "NSGraphics", "NSRunningApplication"] }
 
 [profile.release]
 opt-level = "z"

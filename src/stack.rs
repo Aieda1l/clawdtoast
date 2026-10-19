@@ -59,7 +59,7 @@ mod tests {
     use crate::protocol::Kind;
 
     fn card(sid: &str, body: &str) -> Card {
-        Card { session_id: sid.into(), kind: Kind::Done, project: "p".into(), body: body.into(), badge: None, ts: 0 }
+        Card { session_id: sid.into(), kind: Kind::Done, project: "p".into(), body: body.into(), badge: None, ts: 0, pid: 0 }
     }
 
     #[test]

@@ -201,6 +201,7 @@ impl ApplicationHandler<Ev> for App {
         let Some(i) = self.index_of(id) else { return };
         match event {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                crate::macos::focus_pid(self.shown[i].card.pid);
                 self.remove(el, i, "click")
             }
             WindowEvent::CursorEntered { .. } => self.shown[i].hover_since = Some(Instant::now()),
