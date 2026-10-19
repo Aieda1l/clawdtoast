@@ -31,6 +31,8 @@ pub fn run() {
     let event_loop = match EventLoop::<Ev>::with_user_event()
         .with_activation_policy(ActivationPolicy::Accessory)
         .with_default_menu(false)
+        // winit otherwise activates the app at launch, which steals focus from whatever you're using.
+        .with_activate_ignoring_other_apps(false)
         .build()
     {
         Ok(l) => l,

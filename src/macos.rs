@@ -2,6 +2,8 @@
 
 use crate::config::Position;
 use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
+use objc2::sel;
 use objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
 use objc2_foundation::{MainThreadMarker, NSPoint};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -17,9 +19,49 @@ fn ns_window(w: &Window) -> Option<Retained<NSWindow>> {
     view.window()
 }
 
+extern "C" fn never(_this: *mut AnyObject, _cmd: Sel) -> Bool {
+    Bool::NO
+}
+
+/// winit's window class says it can become the key/main window, so even a click on a card would
+/// pull focus to us. Replace both answers with NO. This changes the class for every window in the
+/// process, which is fine: the overlay process only ever has card windows.
+fn make_unfocusable(win: &NSWindow) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let cls = win.class() as *const AnyClass as *mut objc2::ffi::objc_class;
+        let types = c"c@:".as_ptr();
+        for sel in [sel!(canBecomeKeyWindow), sel!(canBecomeMainWindow)] {
+            unsafe {
+                let imp: unsafe extern "C" fn() =
+                    std::mem::transmute(never as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+                objc2::ffi::class_replaceMethod(cls, sel.as_ptr(), Some(imp), types);
+            }
+        }
+    });
+}
+
+/// Marks the window as non-activating, like an `NSPanel` with `NonactivatingPanel`: clicking it
+/// does not activate our app or take focus from the one in front. This uses AppKit's private
+/// `_setPreventsActivation:`, so it is skipped (and click-to-dismiss then does take focus) if a
+/// future macOS removes it.
+fn prevent_activation(win: &NSWindow) {
+    let sel = sel!(_setPreventsActivation:);
+    unsafe {
+        let responds: Bool = objc2::msg_send![win, respondsToSelector: sel];
+        if responds.as_bool() {
+            let _: () = objc2::msg_send![win, _setPreventsActivation: Bool::YES];
+        } else {
+            crate::log::line("macos: _setPreventsActivation: unavailable");
+        }
+    }
+}
+
 /// Pins the window above full-screen apps on every Space, then places it.
 pub fn configure(w: &Window, width: f64, height: f64, slot: usize, pos: Position) {
     let Some(win) = ns_window(w) else { return };
+    make_unfocusable(&win);
+    prevent_activation(&win);
     unsafe {
         win.setLevel(STATUS_WINDOW_LEVEL);
         win.setCollectionBehavior(

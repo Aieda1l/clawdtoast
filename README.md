@@ -32,7 +32,7 @@ target/release/clawdpet uninstall    # removes only clawdpet's entries
 | `Notification` `idle_prompt` | Waiting for you · project, the hook's message | ping |
 | `SubagentStop` | off by default | ping |
 
-- Cards sit in a corner of the screen holding the mouse (top-right by default), above full-screen apps and on every Space, and never take focus. Clawd waves at 8 fps.
+- Cards sit in a corner of the screen holding the mouse (top-right by default), above full-screen apps and on every Space, and never take focus, neither when they appear nor when you click one (no Accessibility permission needed). Clawd waves at 8 fps.
 - Up to 3 cards stack; more wait in a queue. A new alert for a session that already has a card replaces it. With more than one session open, the title carries a 4-character session tag.
 - A card fades in over 150 ms, stays 5 s, fades out over 300 ms. Hovering pauses the timer; clicking dismisses it.
 - The daemon starts on the first `SessionStart`, forgets sessions whose Claude Code process died (checked every 30 s), and exits 10 s after the last session closes. It draws nothing itself: it starts a short-lived `clawdpet overlay` process when a card is due, which exits 3 s after the last card disappears. That keeps the always-running part small.
