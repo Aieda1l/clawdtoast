@@ -136,7 +136,7 @@ pub fn focus_pid(pid: u32) {
         if let Some(app) = app {
             // `activate` is a no-op for a background app on macOS 14+; LaunchServices is not.
             if let Some(id) = unsafe { app.bundleIdentifier() } {
-                let _ = std::process::Command::new("open").args(["-b", &id.to_string()]).spawn();
+                let _ = std::process::Command::new("open").args(["-b", &id.to_string()]).status();
                 return;
             }
         }
