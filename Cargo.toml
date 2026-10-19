@@ -28,3 +28,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[patch.crates-io]
+# macOS: honour alpha so the card has rounded, transparent corners (see vendor/softbuffer/PATCH.md).
+softbuffer = { path = "vendor/softbuffer" }

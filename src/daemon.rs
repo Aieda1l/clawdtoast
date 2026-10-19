@@ -200,7 +200,8 @@ impl App {
         }
     }
 
-    fn dismiss(&mut self) {
+    fn dismiss(&mut self, why: &str) {
+        log::line(&format!("dismiss: {why}"));
         self.shown = None; // dropping the window destroys it
     }
 }
@@ -233,7 +234,7 @@ impl ApplicationHandler<Msg> for App {
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         use winit::event::{ElementState, MouseButton};
         match event {
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.dismiss(),
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.dismiss("click"),
             WindowEvent::CursorEntered { .. } => {
                 if let Some(s) = &mut self.shown {
                     s.hover_since = Some(Instant::now());
@@ -260,7 +261,7 @@ impl ApplicationHandler<Msg> for App {
         let mut next = self.core.next_deadline();
         if self.shown.is_some() {
             match self.alpha(now) {
-                None => self.dismiss(),
+                None => self.dismiss("timeout"),
                 Some(a) => {
                     if let Some(s) = &self.shown {
                         crate::macos::set_alpha(&s.window, a);

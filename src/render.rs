@@ -10,15 +10,13 @@ pub const CARD_H: f64 = 96.0;
 
 const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
 
+// System fonts for M0 (embedding an open-licensed subset is an M1 item). Helvetica.ttc is
+// skipped: fontdue maps U+00B7 to the wrong glyph in it.
 const FONT_CANDIDATES: &[(&str, usize)] = &[
-    ("/System/Library/Fonts/Helvetica.ttc", 0),
     ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
     ("/Library/Fonts/Arial.ttf", 0),
 ];
-const BOLD_CANDIDATES: &[(&str, usize)] = &[
-    ("/System/Library/Fonts/Helvetica.ttc", 1),
-    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
-];
+const BOLD_CANDIDATES: &[(&str, usize)] = &[("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0)];
 
 pub struct Sprite {
     w: usize,

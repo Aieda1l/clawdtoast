@@ -30,25 +30,25 @@ pub fn configure(w: &Window, width: f64, height: f64) {
     }
     let mouse = unsafe { NSEvent::mouseLocation() };
     let screens = NSScreen::screens(mtm);
-    let target = screens
-        .iter()
-        .find(|s| {
-            let f = s.frame();
-            mouse.x >= f.origin.x
-                && mouse.x < f.origin.x + f.size.width
-                && mouse.y >= f.origin.y
-                && mouse.y < f.origin.y + f.size.height
-        })
-        .or_else(|| NSScreen::mainScreen(mtm));
-    if let Some(screen) = target {
-        let vf = screen.visibleFrame();
+    let under_mouse = screens.iter().find(|s| {
+        let f = s.frame();
+        mouse.x >= f.origin.x
+            && mouse.x < f.origin.x + f.size.width
+            && mouse.y >= f.origin.y
+            && mouse.y < f.origin.y + f.size.height
+    });
+    let visible = match under_mouse {
+        Some(s) => Some(s.visibleFrame()),
+        None => NSScreen::mainScreen(mtm).map(|s| s.visibleFrame()),
+    };
+    if let Some(vf) = visible {
         let origin = NSPoint::new(
             vf.origin.x + vf.size.width - width - 16.0,
             vf.origin.y + vf.size.height - height - 12.0,
         );
-        win.setFrameOrigin(origin);
+        unsafe { win.setFrameOrigin(origin) };
     }
-    win.orderFrontRegardless();
+    unsafe { win.orderFrontRegardless() };
 }
 
 pub fn set_alpha(w: &Window, alpha: f64) {

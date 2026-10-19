@@ -12,6 +12,7 @@ pub struct Session {
 
 #[derive(Debug, Clone)]
 pub struct Card {
+    #[allow(dead_code)] // M1 stacking keys cards by session
     pub session_id: String,
     pub kind: Kind,
     pub project: String,

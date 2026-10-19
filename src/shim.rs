@@ -24,6 +24,9 @@ fn handle(event: &str) -> Result<(), String> {
     let session_id = s("session_id");
     let cwd = s("cwd");
     let project = text::project_name(&cwd);
+    if session_id.is_empty() {
+        return Err("payload has no session_id".into());
+    }
 
     let msg = match event {
         "session-start" => Msg::SessionOpen { session_id, pid: claude_pid(), cwd },

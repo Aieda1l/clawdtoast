@@ -1,0 +1,49 @@
+#!/bin/bash
+# Lifecycle test against a headless daemon. Usage: tests/integration.sh [path/to/clawdpet]
+set -u
+BIN="${1:-target/debug/clawdpet}"
+BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
+export CLAWDPET_DIR="$(mktemp -d)" CLAWDPET_HEADLESS=1 CLAWDPET_MUTE=1 CLAWDPET_GRACE_SECS=1 CLAWDPET_LIVENESS_SECS=1
+fail=0
+check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+log() { cat "$CLAWDPET_DIR/clawdpet.log" 2>/dev/null; }
+daemons() { pgrep -f "$BIN daemon" | wc -l | tr -d ' '; }
+
+T="$CLAWDPET_DIR/t.jsonl"
+echo '{"message":{"role":"assistant","content":[{"type":"text","text":"Fixed the parser. Added tests."}]}}' > "$T"
+
+sleep 60 & FAKE=$!   # stands in for the Claude Code process
+export CLAWDPET_PID=$FAKE
+
+echo '{"session_id":"aaaa1111","cwd":"/x/proj"}' | "$BIN" hook session-start
+check "shim exits 0 and daemon starts on SessionStart" "[ \$(daemons) -eq 1 ]"
+
+echo "{\"session_id\":\"aaaa1111\",\"cwd\":\"/x/proj\",\"transcript_path\":\"$T\"}" | "$BIN" hook stop
+echo '{"session_id":"aaaa1111","cwd":"/x/proj","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}' | "$BIN" hook notification
+echo '{"session_id":"aaaa1111","cwd":"/x/proj","notification_type":"auth_success","message":"ignored"}' | "$BIN" hook notification
+sleep 0.3
+check "Stop alert carries first sentence of last assistant message" "log | grep -q 'card: Done · proj | Fixed the parser.'"
+check "permission alert shown" "log | grep -q 'card: Needs permission · proj | Claude needs your permission to use Bash'"
+check "unlisted notification types ignored" "! log | grep -q ignored"
+echo 'not json' | "$BIN" hook stop; check "garbage stdin exits 0" "[ \$? -eq 0 ]"
+"$BIN" hook bogus </dev/null; check "unknown event exits 0" "[ \$? -eq 0 ]"
+
+kill $FAKE 2>/dev/null
+wait $FAKE 2>/dev/null
+sleep 4
+check "daemon exits after fake Claude PID dies (liveness + grace)" "[ \$(daemons) -eq 0 ]"
+check "socket removed on exit" "[ ! -e $CLAWDPET_DIR/clawdpet.sock ]"
+
+# Concurrent SessionStarts must spawn exactly one daemon.
+unset CLAWDPET_PID
+for i in 1 2 3 4 5 6; do echo "{\"session_id\":\"s$i\",\"cwd\":\"/x\"}" | "$BIN" hook session-start & done
+wait
+sleep 0.3
+check "concurrent starts -> one daemon" "[ \$(daemons) -eq 1 ]"
+for i in 1 2 3 4 5 6; do echo "{\"session_id\":\"s$i\"}" | "$BIN" hook session-end; done
+sleep 3
+check "daemon exits after last SessionEnd" "[ \$(daemons) -eq 0 ]"
+
+pkill -f "$BIN daemon" 2>/dev/null
+rm -rf "$CLAWDPET_DIR"
+exit $fail
