@@ -118,6 +118,7 @@ pub fn set_alpha(w: &Window, alpha: f64) {
 /// no ancestor is an app.
 pub fn focus_pid(pid: u32) {
     if pid == 0 {
+        crate::log::line("macos: card has no pid, nothing to focus");
         return;
     }
     let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid="]).output() else { return };
