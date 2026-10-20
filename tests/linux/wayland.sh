@@ -7,6 +7,9 @@ BIN=$1 OUT=$2
 mkdir -p "$OUT"
 export CLAWDTOAST_DIR="$(mktemp -d)" CLAWDTOAST_MUTE=1 CLAWDTOAST_PID=$$ CLAWDTOAST_GRACE_SECS=1
 unset DISPLAY CLAWDTOAST_HEADLESS CLAWDTOAST_BACKEND
+# On a shared machine (CI) a daemon left by an earlier scenario would skew the process checks.
+pkill -f "$BIN (daemon|overlay)" 2>/dev/null; sleep 0.5
+trap 'pkill -f "$BIN (daemon|overlay)" 2>/dev/null' EXIT
 fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 
