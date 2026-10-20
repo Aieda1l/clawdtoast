@@ -71,13 +71,13 @@ pub fn path() -> PathBuf {
     if let Some(p) = std::env::var_os("CLAWDTOAST_CONFIG") {
         return PathBuf::from(p);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join(".config/clawdtoast/config.toml")
+    crate::paths::home().join(".config/clawdtoast/config.toml")
 }
 
 pub fn expand_home(p: &str) -> PathBuf {
-    match (p.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+    let home = crate::paths::home();
+    match p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
+        Some(rest) if !home.as_os_str().is_empty() => home.join(rest),
         _ => PathBuf::from(p),
     }
 }

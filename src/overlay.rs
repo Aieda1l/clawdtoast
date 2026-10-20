@@ -19,10 +19,14 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId, WindowLevel};
 
-#[cfg(target_os = "linux")]
-use crate::x11 as platform;
 #[cfg(target_os = "macos")]
 use crate::macos as platform;
+#[cfg(windows)]
+use crate::windows as platform;
+#[cfg(target_os = "linux")]
+use crate::x11 as platform;
+#[cfg(windows)]
+use winit::platform::windows::WindowAttributesExtWindows;
 
 enum Ev {
     Card(Card),
@@ -43,6 +47,7 @@ pub fn read_cards(mut f: impl FnMut(Card) -> bool) {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 /// For overlays with no window of their own: calls `f` for each card, and returns once no card
 /// has arrived for `IDLE_EXIT` or the daemon closed stdin. The daemon waits for its overlay to
 /// exit before it does, so an overlay that only stopped at EOF would deadlock with it.
@@ -54,7 +59,7 @@ pub fn serve_cards(mut f: impl FnMut(Card)) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "linux"))]
 pub fn run() {
     run_winit();
 }
@@ -145,7 +150,7 @@ fn opaque_cards() -> bool {
     !platform::compositor_running()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "linux"))]
 fn opaque_cards() -> bool {
     false
 }
@@ -191,7 +196,10 @@ fn draw(assets: &render::Assets, s: &mut Shown, opaque: bool) {
 impl App {
     fn open(&mut self, el: &ActiveEventLoop, card: Card) {
         let slot = self.shown.len();
-        let attrs = Window::default_attributes()
+        let attrs = Window::default_attributes();
+        #[cfg(windows)]
+        let attrs = attrs.with_skip_taskbar(true);
+        let attrs = attrs
             .with_title("clawdtoast")
             .with_inner_size(LogicalSize::new(render::CARD_W, render::CARD_H))
             .with_decorations(false)
@@ -221,8 +229,11 @@ impl App {
         };
         platform::set_alpha(&window, 0.0);
         let mut s = Shown { window, surface, card, timing: Timing::new(), frame: 0 };
-        // Draw before the window is shown so the first visible frame is not blank.
+        #[cfg(not(target_os = "linux"))]
+        platform::configure(&s.window, render::CARD_W, render::CARD_H, slot, self.position);
         draw(self.assets.get_or_insert_with(render::Assets::load), &mut s, self.opaque);
+        // X11 maps the window in `configure`, so draw first to keep the first visible frame from being blank.
+        #[cfg(target_os = "linux")]
         platform::configure(&s.window, render::CARD_W, render::CARD_H, slot, self.position);
         if s.card.ts > 0 {
             log::line(&format!("latency_ms={}", protocol::now_ms().saturating_sub(s.card.ts)));
@@ -276,7 +287,7 @@ impl ApplicationHandler<Ev> for App {
         let Some(i) = self.index_of(id) else { return };
         match event {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                platform::focus_pid(self.shown[i].card.pid);
+                platform::focus_pid(self.shown[i].card.pid, &self.shown[i].card.app);
                 self.remove(el, i, "click")
             }
             WindowEvent::CursorEntered { .. } => self.shown[i].timing.hover(true),

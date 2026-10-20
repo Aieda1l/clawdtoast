@@ -92,6 +92,7 @@ mod tests {
             badge: None,
             ts: 0,
             pid: 0,
+            app: String::new(),
         }
     }
 

@@ -1,13 +1,9 @@
 //! `clawdtoast hook <event>`: runs inside Claude Code's hook machinery. Always exits 0, prints nothing.
 
 use crate::protocol::{self, Kind, Msg};
-use crate::{log, paths, text};
+use crate::{ipc, log, paths, proc, text};
 use serde_json::Value;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::time::{Duration, Instant};
 
 pub fn run(event: &str) {
@@ -67,40 +63,37 @@ fn handle(event: &str) -> Result<(), String> {
 }
 
 fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
-    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms() }
+    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms(), pid: claude_pid(), app: terminal_app() }
 }
 
 pub fn send(msg: &Msg) -> Result<(), String> {
-    let mut s = UnixStream::connect(paths::socket()).map_err(|e| e.to_string())?;
+    let mut s = ipc::connect(&paths::socket()).map_err(|e| e.to_string())?;
     s.set_write_timeout(Some(Duration::from_millis(50))).ok();
     s.write_all(protocol::encode(msg).as_bytes()).map_err(|e| e.to_string())
 }
 
 pub fn connect_ok() -> bool {
-    UnixStream::connect(paths::socket()).is_ok()
+    ipc::connect(&paths::socket()).is_ok()
 }
 
 /// Connect, or start the daemon under an exclusive lock so concurrent sessions spawn only one.
 pub fn ensure_daemon() -> Result<(), String> {
     if connect_ok() {
-        return Ok(());
+        if !older_daemon_running() {
+            return Ok(());
+        }
+        // A newer binary than the running daemon: replace it so only the newest one serves.
+        log::line("shim: replacing older daemon");
+        let _ = send(&Msg::Shutdown);
+        let gone = Instant::now() + Duration::from_millis(1000);
+        while connect_ok() && Instant::now() < gone {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     let _ = std::fs::create_dir_all(paths::runtime_dir());
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(paths::lock())
-        .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + Duration::from_millis(200);
-    // Held until `lock` drops at the end of this function.
-    while unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        if Instant::now() > deadline {
-            return Err("lock timeout".into());
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    // Held until the guard drops at the end of this function.
+    let _lock = lock_exclusive(deadline)?;
     if connect_ok() {
         return Ok(());
     }
@@ -114,6 +107,47 @@ pub fn ensure_daemon() -> Result<(), String> {
     Err("daemon did not come up".into())
 }
 
+/// True when the running daemon was built before this binary. A daemon with no stamp file (from
+/// before stamps existed) cannot be asked to exit, so it is left alone.
+fn older_daemon_running() -> bool {
+    let theirs = std::fs::read_to_string(paths::daemon_stamp()).ok().and_then(|s| s.trim().parse::<u64>().ok());
+    theirs.is_some_and(|t| t < crate::daemon::stamp())
+}
+
+/// Exclusive lock on the lock file, so concurrent sessions spawn only one daemon.
+#[cfg(unix)]
+fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(paths::lock())
+        .map_err(|e| e.to_string())?;
+    while unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if Instant::now() > deadline {
+            return Err("lock timeout".into());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Ok(lock)
+}
+
+/// Windows: opening with share mode 0 fails for everyone else while we hold the handle.
+#[cfg(windows)]
+fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    loop {
+        match std::fs::OpenOptions::new().create(true).write(true).truncate(false).share_mode(0).open(paths::lock()) {
+            Ok(f) => return Ok(f),
+            Err(e) if Instant::now() > deadline => return Err(format!("lock timeout: {e}")),
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
 fn spawn_daemon() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(exe);
@@ -124,13 +158,38 @@ fn spawn_daemon() -> Result<(), String> {
     if std::env::var_os("CLAWDTOAST_HEADLESS").is_some() {
         cmd.arg("--headless");
     }
+    #[cfg(unix)]
     unsafe {
-        cmd.pre_exec(|| {
+        std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
             libc::setsid();
             Ok(())
         });
     }
+    // Detached from our console and process group, so it outlives the hook and Claude Code.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0000_0008 | 0x0000_0200); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Bundle id of the terminal this hook's environment came from, if it says: macOS sets
+/// `__CFBundleIdentifier` for anything launched from an app; `TERM_PROGRAM` and Ghostty's own
+/// variables cover shells that cleared it. Empty when unknown.
+fn terminal_app() -> String {
+    if let Ok(id) = std::env::var("__CFBundleIdentifier") {
+        return id;
+    }
+    let by_program = match std::env::var("TERM_PROGRAM").as_deref() {
+        Ok("ghostty") => "com.mitchellh.ghostty",
+        Ok("iTerm.app") => "com.googlecode.iterm2",
+        Ok("Apple_Terminal") => "com.apple.Terminal",
+        Ok("vscode") => "com.microsoft.VSCode",
+        Ok("WezTerm") => "com.github.wez.wezterm",
+        Ok("Hyper") => "co.zeit.hyper",
+        _ if std::env::var_os("GHOSTTY_BIN_DIR").is_some() => "com.mitchellh.ghostty",
+        _ if std::env::var_os("KITTY_WINDOW_ID").is_some() => "net.kovidgoyal.kitty",
+        _ => "",
+    };
+    by_program.into()
 }
 
 /// PID of the Claude Code process: the nearest ancestor whose command name mentions "claude".
@@ -139,29 +198,5 @@ fn claude_pid() -> u32 {
     if let Some(p) = std::env::var("CLAWDTOAST_PID").ok().and_then(|p| p.parse().ok()) {
         return p;
     }
-    let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid=,comm="]).output() else {
-        return 0;
-    };
-    let table: std::collections::HashMap<u32, (u32, String)> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| {
-            let mut it = l.split_whitespace();
-            let pid = it.next()?.parse().ok()?;
-            let ppid = it.next()?.parse().ok()?;
-            Some((pid, (ppid, it.collect::<Vec<_>>().join(" "))))
-        })
-        .collect();
-    let mut cur = unsafe { libc::getppid() } as u32;
-    for _ in 0..16 {
-        let Some((ppid, comm)) = table.get(&cur) else { break };
-        let base = comm.rsplit('/').next().unwrap_or("");
-        if base.to_lowercase().contains("claude") {
-            return cur;
-        }
-        if *ppid <= 1 {
-            break;
-        }
-        cur = *ppid;
-    }
-    0
+    proc::find_ancestor(|name| name.to_lowercase().contains("claude")).unwrap_or(0)
 }

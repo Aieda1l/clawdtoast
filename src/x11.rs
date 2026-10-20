@@ -207,7 +207,7 @@ fn parse_ppid(stat: &str) -> Option<u32> {
 /// ancestor (or the process itself) that owns a top-level window (`_NET_WM_PID`). Terminals that
 /// run all windows in one server process (gnome-terminal) are not found this way; then it is a
 /// no-op. No-op when `pid` is 0.
-pub fn focus_pid(pid: u32) {
+pub fn focus_pid(pid: u32, _app: &str) {
     if pid == 0 {
         return;
     }
