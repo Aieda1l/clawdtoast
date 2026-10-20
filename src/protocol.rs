@@ -55,6 +55,10 @@ pub enum Msg {
         /// still focus its terminal on click.
         #[serde(default)]
         pid: u32,
+        /// Bundle id of the terminal app the hook's environment points at; the click-to-focus
+        /// fallback for sessions with no GUI app above them (background sessions).
+        #[serde(default)]
+        app: String,
     },
     /// Re-read config.toml.
     Reload,
@@ -102,6 +106,7 @@ mod tests {
             text: "hi".into(),
             ts: 5,
             pid: 0,
+            app: String::new(),
         };
         let back = decode(&encode(&m)).unwrap();
         assert!(matches!(back, Msg::Alert { kind: Kind::Permission, .. }));
