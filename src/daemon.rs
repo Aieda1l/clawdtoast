@@ -3,13 +3,15 @@
 
 use crate::config::Config;
 use crate::core::{Card, Core};
+use crate::ipc::{self, Listener};
 use crate::protocol::{self, Msg};
 use crate::{log, paths, sound};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn run(headless: bool) {
     let Some(listener) = bind() else { return }; // another daemon is already serving
@@ -19,27 +21,20 @@ pub fn run(headless: bool) {
     log::line("daemon exit");
 }
 
-fn bind() -> Option<UnixListener> {
+fn bind() -> Option<Listener> {
     let dir = paths::support_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    ipc::secure_dir(&dir);
     let sock = paths::socket();
-    let listener = match UnixListener::bind(&sock) {
-        Ok(l) => l,
-        Err(_) => {
-            if UnixStream::connect(&sock).is_ok() {
-                return None;
-            }
-            let _ = std::fs::remove_file(&sock); // stale socket from a dead daemon
-            UnixListener::bind(&sock).ok()?
-        }
-    };
-    let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600));
-    Some(listener)
+    if ipc::connect(&sock).is_ok() {
+        return None; // another daemon is serving
+    }
+    let _ = std::fs::remove_file(&sock); // stale socket from a dead daemon
+    ipc::bind(&sock).ok()
 }
 
 /// Accepts connections on a background thread and forwards parsed messages.
-fn spawn_acceptor(listener: UnixListener, tx: std::sync::mpsc::Sender<Msg>) {
+fn spawn_acceptor(listener: Listener, tx: std::sync::mpsc::Sender<Msg>) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             stream.set_read_timeout(Some(Duration::from_millis(200))).ok();
@@ -66,13 +61,11 @@ struct Overlay {
 impl Overlay {
     fn spawn() -> Option<Overlay> {
         let exe = std::env::current_exe().ok()?;
-        let mut child = Command::new(exe)
-            .arg("overlay")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("overlay").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
+        let mut child = cmd.spawn().ok()?;
         let stdin = child.stdin.take()?;
         Some(Overlay { child, stdin })
     }
@@ -106,7 +99,7 @@ fn show(overlay: &mut Option<Overlay>, card: &Card) {
     log::line("daemon: could not show card");
 }
 
-fn run_loop(listener: UnixListener, headless: bool) {
+fn run_loop(listener: Listener, headless: bool) {
     let (tx, rx) = std::sync::mpsc::channel::<Msg>();
     spawn_acceptor(listener, tx);
     let mut core = Core::new(Instant::now(), Config::load());

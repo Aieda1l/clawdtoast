@@ -2,17 +2,21 @@ mod config;
 mod core;
 mod daemon;
 mod install;
+mod ipc;
 mod log;
 #[cfg(target_os = "macos")]
 mod macos;
 mod overlay;
 mod paths;
+mod proc;
 mod protocol;
 mod render;
 mod shim;
 mod sound;
 mod stack;
 mod text;
+#[cfg(windows)]
+mod windows;
 
 use protocol::{Kind, Msg};
 

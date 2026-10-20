@@ -13,7 +13,14 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+#[cfg(target_os = "macos")]
+use crate::macos as platform;
+#[cfg(windows)]
+use crate::windows as platform;
+#[cfg(target_os = "macos")]
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+#[cfg(windows)]
+use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId, WindowLevel};
 
 const FADE_IN: Duration = Duration::from_millis(150);
@@ -28,13 +35,14 @@ enum Ev {
 }
 
 pub fn run() {
-    let event_loop = match EventLoop::<Ev>::with_user_event()
+    let mut builder = EventLoop::<Ev>::with_user_event();
+    #[cfg(target_os = "macos")]
+    builder
         .with_activation_policy(ActivationPolicy::Accessory)
         .with_default_menu(false)
         // winit otherwise activates the app at launch, which steals focus from whatever you're using.
-        .with_activate_ignoring_other_apps(false)
-        .build()
-    {
+        .with_activate_ignoring_other_apps(false);
+    let event_loop = match builder.build() {
         Ok(l) => l,
         Err(e) => return log::line(&format!("overlay: event loop: {e}")),
     };
@@ -126,7 +134,10 @@ fn draw(assets: &render::Assets, s: &mut Shown) {
 impl App {
     fn open(&mut self, el: &ActiveEventLoop, card: Card) {
         let slot = self.shown.len();
-        let attrs = Window::default_attributes()
+        let attrs = Window::default_attributes();
+        #[cfg(windows)]
+        let attrs = attrs.with_skip_taskbar(true);
+        let attrs = attrs
             .with_title("clawdtoast")
             .with_inner_size(LogicalSize::new(render::CARD_W, render::CARD_H))
             .with_decorations(false)
@@ -144,8 +155,8 @@ impl App {
             Ok(s) => s,
             Err(e) => return log::line(&format!("softbuffer: {e}")),
         };
-        crate::macos::set_alpha(&window, 0.0);
-        crate::macos::configure(&window, render::CARD_W, render::CARD_H, slot, self.position);
+        platform::set_alpha(&window, 0.0);
+        platform::configure(&window, render::CARD_W, render::CARD_H, slot, self.position);
         let mut s = Shown { window, surface, card, shown_at: Instant::now(), hover_since: None, frame: 0 };
         draw(self.assets.get_or_insert_with(render::Assets::load), &mut s);
         if s.card.ts > 0 {
@@ -162,7 +173,7 @@ impl App {
             self.open(el, next);
         }
         for (i, s) in self.shown.iter().enumerate().skip(idx) {
-            crate::macos::place(&s.window, render::CARD_W, render::CARD_H, i, self.position);
+            platform::place(&s.window, render::CARD_W, render::CARD_H, i, self.position);
         }
     }
 
@@ -201,7 +212,7 @@ impl ApplicationHandler<Ev> for App {
         let Some(i) = self.index_of(id) else { return };
         match event {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                crate::macos::focus_pid(self.shown[i].card.pid);
+                platform::focus_pid(self.shown[i].card.pid);
                 self.remove(el, i, "click")
             }
             WindowEvent::CursorEntered { .. } => self.shown[i].hover_since = Some(Instant::now()),
@@ -234,7 +245,7 @@ impl ApplicationHandler<Ev> for App {
         let assets = self.assets.get_or_insert_with(render::Assets::load);
         for s in self.shown.iter_mut() {
             let Some(a) = s.alpha(now, hold) else { continue };
-            crate::macos::set_alpha(&s.window, a);
+            platform::set_alpha(&s.window, a);
             let t = s.age(now);
             let frame = (t.as_millis() / WAVE_FRAME.as_millis()) as usize % assets.frames();
             if frame != s.frame {

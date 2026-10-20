@@ -1,6 +1,6 @@
 # clawdtoast
 
-A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code finishes a turn or needs you. It runs only while a Claude Code session is open. This repo is at **M1** (macOS); see the design doc for the plan.
+A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code finishes a turn or needs you. It runs only while a Claude Code session is open. Runs on macOS and Windows (10+); see the design doc for the plan.
 
 ## Install
 
@@ -22,6 +22,15 @@ target/release/clawdtoast uninstall    # removes only clawdtoast's entries
 ```
 
 `install` refuses to run while the plugin is installed (the hooks would fire twice) unless you pass `--force`. Try it any time with `clawdtoast test`, which shows one card of each kind.
+
+### Windows
+
+Same steps; the binary is `target\release\clawdtoast.exe`. Claude Code runs hooks through Git Bash, so `scripts/clawdtoast.sh` works as is (and `install` writes the path with forward slashes for the same reason). Differences from macOS:
+
+- State lives in `%LOCALAPPDATA%\clawdtoast`; the daemon listens on a loopback port recorded in `clawdtoast.sock`. The config is still `~\.config\clawdtoast\config.toml`.
+- Cards have hard-edged rounded corners (a window region, not per-pixel alpha), are topmost and never take focus, but they do not follow you onto full-screen exclusive apps.
+- Clicking a card raises the window of the nearest ancestor process that has one (Windows Terminal, VS Code, ...). Classic `conhost` consoles are not an ancestor of `claude.exe`, so those are not raised.
+- Focus Assist muting is not implemented. The Windows build has only been cross-checked (`cargo check --target x86_64-pc-windows-msvc`), not run on hardware yet.
 
 ## What it does
 
@@ -71,7 +80,7 @@ python3 -I tools/gen_assets.py      # regenerate assets/ (sprite sheet + sounds)
 scripts/release.sh                  # universal binary in dist/, signed (see below)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the first three on macOS.
+CI (`.github/workflows/ci.yml`) runs the first three on macOS, and `cargo test` plus a release build on Windows.
 
 ### Budgets
 

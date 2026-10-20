@@ -139,8 +139,7 @@ impl Core {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    let r = unsafe { libc::kill(pid as i32, 0) };
-    r == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    crate::proc::alive(pid)
 }
 
 #[cfg(test)]
