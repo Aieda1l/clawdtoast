@@ -58,7 +58,7 @@ fn handle(event: &str) -> Result<(), String> {
 }
 
 fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
-    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms(), pid: claude_pid() }
+    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms(), pid: claude_pid(), app: terminal_app() }
 }
 
 pub fn send(msg: &Msg) -> Result<(), String> {
@@ -164,6 +164,27 @@ fn spawn_daemon() -> Result<(), String> {
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0000_0008 | 0x0000_0200); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Bundle id of the terminal this hook's environment came from, if it says: macOS sets
+/// `__CFBundleIdentifier` for anything launched from an app; `TERM_PROGRAM` and Ghostty's own
+/// variables cover shells that cleared it. Empty when unknown.
+fn terminal_app() -> String {
+    if let Ok(id) = std::env::var("__CFBundleIdentifier") {
+        return id;
+    }
+    let by_program = match std::env::var("TERM_PROGRAM").as_deref() {
+        Ok("ghostty") => "com.mitchellh.ghostty",
+        Ok("iTerm.app") => "com.googlecode.iterm2",
+        Ok("Apple_Terminal") => "com.apple.Terminal",
+        Ok("vscode") => "com.microsoft.VSCode",
+        Ok("WezTerm") => "com.github.wez.wezterm",
+        Ok("Hyper") => "co.zeit.hyper",
+        _ if std::env::var_os("GHOSTTY_BIN_DIR").is_some() => "com.mitchellh.ghostty",
+        _ if std::env::var_os("KITTY_WINDOW_ID").is_some() => "net.kovidgoyal.kitty",
+        _ => "",
+    };
+    by_program.into()
 }
 
 /// PID of the Claude Code process: the nearest ancestor whose command name mentions "claude".

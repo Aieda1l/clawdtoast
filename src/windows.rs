@@ -83,7 +83,7 @@ pub fn set_alpha(w: &Window, alpha: f64) {
 /// Brings forward the window of the app that hosts the Claude Code process `pid`: the nearest
 /// ancestor (or the process itself) that owns a visible top-level window, i.e. the terminal or IDE.
 /// No-op when `pid` is 0 or no ancestor has a window.
-pub fn focus_pid(pid: u32) {
+pub fn focus_pid(pid: u32, _app: &str) {
     if pid == 0 {
         crate::log::line("windows: card has no pid, nothing to focus");
         return;

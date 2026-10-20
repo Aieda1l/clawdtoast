@@ -116,9 +116,13 @@ pub fn set_alpha(w: &Window, alpha: f64) {
 /// Brings forward the app that hosts the Claude Code process `pid`: the nearest ancestor (or the
 /// process itself) that is a regular GUI app, i.e. the terminal or IDE. No-op when `pid` is 0 or
 /// no ancestor is an app.
-pub fn focus_pid(pid: u32) {
+pub fn focus_pid(pid: u32, app: &str) {
     if pid == 0 {
-        crate::log::line("macos: card has no pid, nothing to focus");
+        if app.is_empty() {
+            crate::log::line("macos: card has no pid, nothing to focus");
+        } else {
+            let _ = std::process::Command::new("open").args(["-b", app]).status();
+        }
         return;
     }
     let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid="]).output() else { return };
@@ -145,6 +149,12 @@ pub fn focus_pid(pid: u32) {
             Some(&p) if p > 1 => cur = p,
             _ => break,
         }
+    }
+    if !app.is_empty() {
+        // Background sessions have no terminal above them; fall back to the app the hook's
+        // environment named.
+        let _ = std::process::Command::new("open").args(["-b", app]).status();
+        return;
     }
     crate::log::line(&format!("macos: no app found above pid {pid}"));
 }

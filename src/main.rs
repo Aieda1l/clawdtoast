@@ -80,6 +80,7 @@ fn self_test() {
             text: text.into(),
             ts: protocol::now_ms(),
             pid: 0,
+            app: String::new(),
         };
         let _ = shim::send(&m);
         std::thread::sleep(std::time::Duration::from_millis(1200));
