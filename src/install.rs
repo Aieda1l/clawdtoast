@@ -86,7 +86,7 @@ fn claude_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return PathBuf::from(d);
     }
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".claude")
+    crate::paths::home().join(".claude")
 }
 
 fn plugin_installed(dir: &std::path::Path) -> bool {
@@ -107,7 +107,9 @@ pub fn run(install: bool, force: bool) -> Result<(), String> {
     };
     let n = if install {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        merge(&mut settings, &exe.to_string_lossy())?
+        // Claude Code runs hook commands through a POSIX shell, even on Windows (Git Bash), where
+        // backslashes in a path would be eaten.
+        merge(&mut settings, &exe.to_string_lossy().replace('\\', "/"))?
     } else {
         strip(&mut settings)
     };

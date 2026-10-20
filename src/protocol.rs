@@ -51,9 +51,15 @@ pub enum Msg {
         /// Shim timestamp in ms since the epoch, for latency logging.
         #[serde(default)]
         ts: u64,
+        /// Claude Code PID, so a session the daemon never saw open (or lost in a restart) can
+        /// still focus its terminal on click.
+        #[serde(default)]
+        pid: u32,
     },
     /// Re-read config.toml.
     Reload,
+    /// Exit now; sent by a newer binary that is taking over.
+    Shutdown,
     #[serde(other)]
     Unknown,
 }
@@ -95,6 +101,7 @@ mod tests {
             project: "clawdtoast".into(),
             text: "hi".into(),
             ts: 5,
+            pid: 0,
         };
         let back = decode(&encode(&m)).unwrap();
         assert!(matches!(back, Msg::Alert { kind: Kind::Permission, .. }));

@@ -231,6 +231,7 @@ dependencies = [
  "softbuffer",
  "tiny-skia",
  "toml",
+ "windows-sys 0.59.0",
  "winit",
 ]
 

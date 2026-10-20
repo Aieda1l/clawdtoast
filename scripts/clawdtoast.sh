@@ -4,7 +4,7 @@
 # available; hooks are no-ops until then. Always exits 0 so Claude Code is never blocked.
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-for c in "$CLAWDTOAST_BIN" "$ROOT/bin/clawdtoast" "$ROOT/target/release/clawdtoast" "$(command -v clawdtoast)"; do
+for c in "$CLAWDTOAST_BIN" "$ROOT/bin/clawdtoast" "$ROOT/bin/clawdtoast.exe" "$ROOT/target/release/clawdtoast" "$ROOT/target/release/clawdtoast.exe" "$(command -v clawdtoast)"; do
   if [ -n "$c" ] && [ -x "$c" ]; then
     exec "$c" "$@"
   fi

@@ -2,17 +2,21 @@ mod config;
 mod core;
 mod daemon;
 mod install;
+mod ipc;
 mod log;
 #[cfg(target_os = "macos")]
 mod macos;
 mod overlay;
 mod paths;
+mod proc;
 mod protocol;
 mod render;
 mod shim;
 mod sound;
 mod stack;
 mod text;
+#[cfg(windows)]
+mod windows;
 
 use protocol::{Kind, Msg};
 
@@ -75,6 +79,7 @@ fn self_test() {
             project: "clawdtoast".into(),
             text: text.into(),
             ts: protocol::now_ms(),
+            pid: 0,
         };
         let _ = shim::send(&m);
         std::thread::sleep(std::time::Duration::from_millis(1200));
