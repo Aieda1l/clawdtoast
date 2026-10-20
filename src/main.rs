@@ -1,11 +1,15 @@
+mod anim;
+mod backend;
 mod config;
 mod core;
 mod daemon;
+mod geom;
 mod install;
 mod ipc;
 mod log;
 #[cfg(target_os = "macos")]
 mod macos;
+mod notify;
 mod overlay;
 mod paths;
 mod proc;
@@ -15,6 +19,10 @@ mod shim;
 mod sound;
 mod stack;
 mod text;
+#[cfg(target_os = "linux")]
+mod wayland;
+#[cfg(target_os = "linux")]
+mod x11;
 #[cfg(windows)]
 mod windows;
 

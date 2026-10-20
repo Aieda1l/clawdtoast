@@ -19,7 +19,7 @@ report() { # name value limit unit
 cleanup() { pkill -f "$BIN daemon" 2>/dev/null; pkill -f "$BIN overlay" 2>/dev/null; rm -rf "$CLAWDTOAST_DIR"; }
 trap cleanup EXIT
 
-report "binary size" "$(( $(stat -f %z "$BIN" 2>/dev/null || stat -c %s "$BIN") / 1024 ))" $MAX_SIZE_KB KB
+report "binary size" "$(( $(stat -c %s "$BIN" 2>/dev/null || stat -f %z "$BIN") / 1024 ))" $MAX_SIZE_KB KB
 
 # Idle daemon memory, 10 s after start, with one registered session.
 CLAWDTOAST_GRACE_SECS=600 CLAWDTOAST_HEADLESS=1 "$BIN" hook session-start <<< '{"session_id":"bud","cwd":"/x/proj"}'

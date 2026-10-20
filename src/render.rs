@@ -15,8 +15,41 @@ const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
 const FONT_CANDIDATES: &[(&str, usize)] = &[
     ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
     ("/Library/Fonts/Arial.ttf", 0),
+    // Linux: Debian/Ubuntu, Fedora, Arch layouts.
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 0),
+    ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf", 0),
+    ("/usr/share/fonts/google-noto/NotoSans-Regular.ttf", 0),
+    ("/usr/share/fonts/TTF/DejaVuSans.ttf", 0),
+    ("/usr/share/fonts/noto/NotoSans-Regular.ttf", 0),
 ];
-const BOLD_CANDIDATES: &[(&str, usize)] = &[("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0)];
+const BOLD_CANDIDATES: &[(&str, usize)] = &[
+    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", 0),
+    ("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf", 0),
+    ("/usr/share/fonts/google-noto/NotoSans-Bold.ttf", 0),
+    ("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", 0),
+    ("/usr/share/fonts/noto/NotoSans-Bold.ttf", 0),
+];
+
+/// Asks fontconfig for a sans font when none of the well-known paths exist (Linux only).
+fn fontconfig_font(style: &str) -> Option<Font> {
+    if cfg!(not(target_os = "linux")) {
+        return None;
+    }
+    let out = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}", &format!("sans:{style}")])
+        .output()
+        .ok()?;
+    let path = String::from_utf8(out.stdout).ok()?;
+    let data = std::fs::read(path.trim()).ok()?;
+    Font::from_bytes(data, FontSettings::default()).ok()
+}
 
 /// A sheet of square frames laid out left to right; frame size is the image height.
 pub struct Sprite {
@@ -62,8 +95,10 @@ impl Assets {
     }
 
     pub fn load() -> Assets {
-        let regular = load_font(FONT_CANDIDATES);
-        let bold = load_font(BOLD_CANDIDATES).or_else(|| load_font(FONT_CANDIDATES));
+        let regular = load_font(FONT_CANDIDATES).or_else(|| fontconfig_font("regular"));
+        let bold = load_font(BOLD_CANDIDATES)
+            .or_else(|| fontconfig_font("bold"))
+            .or_else(|| load_font(FONT_CANDIDATES));
         Assets { sprite: load_sprite(), regular, bold }
     }
 }
@@ -225,4 +260,48 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         .chunks_exact(4)
         .map(|p| (p[3] as u32) << 24 | (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32)
         .collect()
+}
+
+/// Composites premultiplied 0xAARRGGBB pixels onto the card's solid colour, for X11 screens with
+/// no compositor, where a window cannot be transparent.
+pub fn flatten(pixels: &mut [u32]) {
+    const BG: [u32; 3] = [0x26, 0x24, 0x22];
+    for p in pixels {
+        let inv = 255 - (*p >> 24);
+        let ch = |shift: u32, bg: u32| (((*p >> shift) & 0xFF) + bg * inv / 255).min(255);
+        *p = 0xFF00_0000 | ch(16, BG[0]) << 16 | ch(8, BG[1]) << 8 | ch(0, BG[2]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fade, flatten};
+
+    #[test]
+    fn fade_scales_every_premultiplied_channel() {
+        let mut px = [0xFF80_4020, 0x1111_1111];
+        fade(&mut px, 1.0);
+        assert_eq!(px[0], 0xFF80_4020);
+        fade(&mut px, 0.5);
+        assert_eq!(px[0], 0x7F40_2010);
+        fade(&mut px, 0.0);
+        assert_eq!(px, [0, 0]);
+    }
+
+    #[test]
+    fn flatten_fills_transparent_with_card_colour_and_keeps_opaque() {
+        let mut px = [0x0000_0000, 0xFFAA_BBCC];
+        flatten(&mut px);
+        assert_eq!(px, [0xFF26_2422, 0xFFAA_BBCC]);
+    }
+}
+
+/// Scales premultiplied 0xAARRGGBB pixels by `alpha` (0..=1), for compositors with no window opacity.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn fade(pixels: &mut [u32], alpha: f64) {
+    let a = (alpha.clamp(0.0, 1.0) * 256.0) as u32;
+    for p in pixels {
+        let ch = |shift: u32| (((*p >> shift) & 0xFF) * a >> 8).min(255);
+        *p = ch(24) << 24 | ch(16) << 16 | ch(8) << 8 | ch(0);
+    }
 }

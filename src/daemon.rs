@@ -25,6 +25,7 @@ pub fn stamp() -> u64 {
 
 pub fn run(headless: bool) {
     let Some(listener) = bind() else { return }; // another daemon is already serving
+    let _ = std::fs::create_dir_all(paths::support_dir()); // on Linux the socket lives elsewhere
     let _ = std::fs::write(paths::daemon_stamp(), stamp().to_string());
     log::line(&format!("daemon up pid={} headless={headless}", std::process::id()));
     run_loop(listener, headless);
@@ -34,7 +35,7 @@ pub fn run(headless: bool) {
 }
 
 fn bind() -> Option<Listener> {
-    let dir = paths::support_dir();
+    let dir = paths::runtime_dir();
     let _ = std::fs::create_dir_all(&dir);
     ipc::secure_dir(&dir);
     let sock = paths::socket();
