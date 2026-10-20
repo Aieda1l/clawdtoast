@@ -58,7 +58,7 @@ fn handle(event: &str) -> Result<(), String> {
 }
 
 fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
-    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms() }
+    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms(), pid: claude_pid() }
 }
 
 pub fn send(msg: &Msg) -> Result<(), String> {
@@ -74,7 +74,16 @@ pub fn connect_ok() -> bool {
 /// Connect, or start the daemon under an exclusive lock so concurrent sessions spawn only one.
 pub fn ensure_daemon() -> Result<(), String> {
     if connect_ok() {
-        return Ok(());
+        if !older_daemon_running() {
+            return Ok(());
+        }
+        // A newer binary than the running daemon: replace it so only the newest one serves.
+        log::line("shim: replacing older daemon");
+        let _ = send(&Msg::Shutdown);
+        let gone = Instant::now() + Duration::from_millis(1000);
+        while connect_ok() && Instant::now() < gone {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     let _ = std::fs::create_dir_all(paths::support_dir());
     let deadline = Instant::now() + Duration::from_millis(200);
@@ -91,6 +100,13 @@ pub fn ensure_daemon() -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(5));
     }
     Err("daemon did not come up".into())
+}
+
+/// True when the running daemon was built before this binary. A daemon with no stamp file (from
+/// before stamps existed) cannot be asked to exit, so it is left alone.
+fn older_daemon_running() -> bool {
+    let theirs = std::fs::read_to_string(paths::daemon_stamp()).ok().and_then(|s| s.trim().parse::<u64>().ok());
+    theirs.is_some_and(|t| t < crate::daemon::stamp())
 }
 
 /// Exclusive lock on the lock file, so concurrent sessions spawn only one daemon.

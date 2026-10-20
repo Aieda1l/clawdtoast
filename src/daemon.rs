@@ -13,10 +13,22 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Build time of this binary (mtime of the executable, in seconds). A newer binary replaces a
+/// daemon with a smaller stamp; see `shim::ensure_daemon`.
+pub fn stamp() -> u64 {
+    std::env::current_exe()
+        .and_then(|p| std::fs::metadata(p)?.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
 pub fn run(headless: bool) {
     let Some(listener) = bind() else { return }; // another daemon is already serving
+    let _ = std::fs::write(paths::daemon_stamp(), stamp().to_string());
     log::line(&format!("daemon up pid={} headless={headless}", std::process::id()));
     run_loop(listener, headless);
+    let _ = std::fs::remove_file(paths::daemon_stamp());
     let _ = std::fs::remove_file(paths::socket());
     log::line("daemon exit");
 }
@@ -113,6 +125,10 @@ fn run_loop(listener: Listener, headless: bool) {
             wait = wait.min(Duration::from_secs(1)); // notice the overlay exiting
         }
         if let Ok(msg) = rx.recv_timeout(wait) {
+            if matches!(msg, Msg::Shutdown) {
+                log::line("daemon: replaced by a newer binary");
+                return;
+            }
             if let Some(card) = core.handle(msg, Instant::now()) {
                 sound::play(card.kind, &core.config.sound);
                 if headless {

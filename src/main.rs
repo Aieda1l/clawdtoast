@@ -79,6 +79,7 @@ fn self_test() {
             project: "clawdtoast".into(),
             text: text.into(),
             ts: protocol::now_ms(),
+            pid: 0,
         };
         let _ = shim::send(&m);
         std::thread::sleep(std::time::Duration::from_millis(1200));

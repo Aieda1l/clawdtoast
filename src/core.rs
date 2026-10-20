@@ -77,7 +77,7 @@ impl Core {
                 self.note_empty(now);
                 None
             }
-            Msg::Alert { session_id, kind, project, text, ts } => {
+            Msg::Alert { session_id, kind, project, text, ts, pid } => {
                 let e = &self.config.events;
                 let enabled = match kind {
                     Kind::Done => e.stop,
@@ -90,11 +90,12 @@ impl Core {
                     return None;
                 }
                 // An alert from a session we never saw open (plugin installed mid-session).
-                if !self.sessions.contains_key(&session_id) {
-                    self.sessions.insert(session_id.clone(), Session { pid: 0 });
-                    self.empty_since = None;
+                let s = self.sessions.entry(session_id.clone()).or_insert(Session { pid: 0 });
+                if s.pid == 0 {
+                    s.pid = pid;
                 }
-                let pid = self.sessions.get(&session_id).map_or(0, |s| s.pid);
+                let pid = s.pid;
+                self.empty_since = None;
                 let badge = (self.sessions.len() > 1).then(|| session_id.chars().take(4).collect());
                 Some(Card { session_id, kind, project, body: text, badge, ts, pid })
             }
@@ -102,7 +103,7 @@ impl Core {
                 self.config = Config::load();
                 None
             }
-            Msg::Unknown => None,
+            Msg::Shutdown | Msg::Unknown => None,
         }
     }
 
@@ -147,7 +148,7 @@ mod tests {
     use super::*;
 
     fn alert(sid: &str, kind: Kind) -> Msg {
-        Msg::Alert { session_id: sid.into(), kind, project: "p".into(), text: "t".into(), ts: 0 }
+        Msg::Alert { session_id: sid.into(), kind, project: "p".into(), text: "t".into(), ts: 0, pid: 0 }
     }
 
     #[test]

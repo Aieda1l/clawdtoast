@@ -28,6 +28,11 @@ pub fn socket() -> PathBuf {
     support_dir().join("clawdtoast.sock")
 }
 
+/// Records which binary the running daemon is (see `daemon::stamp`).
+pub fn daemon_stamp() -> PathBuf {
+    support_dir().join("clawdtoast.daemon")
+}
+
 pub fn lock() -> PathBuf {
     support_dir().join("clawdtoast.lock")
 }
