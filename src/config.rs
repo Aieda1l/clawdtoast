@@ -55,11 +55,24 @@ impl Default for Events {
     }
 }
 
-/// An optional local PNG sprite sheet; Clawd remains the default.
+/// Which sprite to use when animation overrides are enabled.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SpriteChoice {
+    #[default]
+    Auto,
+    Clawd,
+    Codex,
+    Bae,
+    Custom,
+}
+
+/// Default is Clawd for Claude Code and the OpenAI spinner for Codex.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Animation {
     pub enabled: bool,
+    pub sprite: SpriteChoice,
     pub file: Option<String>,
     pub fps: f64,
     /// Logical pixels reserved for a custom sprite (Clawd always renders at 64).
@@ -70,6 +83,7 @@ impl Default for Animation {
     fn default() -> Animation {
         Animation {
             enabled: false,
+            sprite: SpriteChoice::Auto,
             file: None,
             fps: 8.0,
             size: 88,
@@ -160,6 +174,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use super::SpriteChoice;
     use super::*;
 
     #[test]
@@ -169,6 +184,7 @@ mod tests {
         assert_eq!(c.max_stack, 3);
         assert!(c.events.stop && !c.events.subagent_stop);
         assert!(!c.animation.enabled);
+        assert_eq!(c.animation.sprite, SpriteChoice::Auto);
         assert_eq!(c.animation.fps, 8.0);
         assert_eq!(c.animation.size, 88);
     }
@@ -215,6 +231,10 @@ subagent_stop = true
         assert_eq!(c.animation.file.as_deref(), Some("~/sprites/test.png"));
         assert_eq!(c.animation.fps, 12.5);
         assert_eq!(c.animation.size, 80);
+        let choice = Config::parse("[animation]\nenabled = true\nsprite = 'bae'").unwrap();
+        assert!(choice.animation.enabled);
+        assert_eq!(choice.animation.sprite, SpriteChoice::Bae);
+        assert!(Config::parse("[animation]\nsprite = 'invalid'").is_err());
         assert_eq!(
             Config::parse("[animation]\nfps = -4")
                 .unwrap()

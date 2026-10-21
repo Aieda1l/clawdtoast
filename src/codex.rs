@@ -140,6 +140,7 @@ fn translate(event: &str, v: &Value, pid: u32, app: String) -> Result<Option<Msg
         ts: protocol::now_ms(),
         pid,
         app: app.clone(),
+        agent: "codex".into(),
     };
     Ok(Some(match event {
         "session-start" => Msg::SessionOpen {

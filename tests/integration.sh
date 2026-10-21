@@ -50,8 +50,8 @@ codex_response=$(echo '{"session_id":"c1","cwd":"/x/codex","last_assistant_messa
 echo '{"session_id":"c1","cwd":"/x/codex","tool_name":"Bash"}' | "$BIN" codex-hook permission-request
 sleep 0.3
 check "Codex Stop produces valid neutral JSON" '[ "$codex_response" = "{}" ]'
-check "Codex Stop uses last_assistant_message" "log | grep -q 'card: Done Â· codex | Fixed the tests.'"
-check "Codex approval request uses the tool name" "log | grep -q 'card: Needs permission Â· codex | Codex needs approval for Bash'"
+check "Codex Stop uses last_assistant_message" "log | grep -q 'card: Done · codex | Fixed the tests.'"
+check "Codex approval request uses the tool name" "log | grep -q 'card: Needs permission · codex | Codex needs approval for Bash'"
 echo '{"session_id":"c1"}' | "$BIN" codex-hook session-end
 sleep 3
 check "Codex SessionEnd closes its session" "[ \$(daemons) -eq 0 ]"

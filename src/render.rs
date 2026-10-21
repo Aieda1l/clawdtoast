@@ -1,6 +1,6 @@
 //! Software card renderer: rounded card, sprite, status dot, two lines of text.
 
-use crate::config::{Animation, Config};
+use crate::config::{Animation, Config, SpriteChoice};
 use crate::core::Card;
 use crate::protocol::Kind;
 use fontdue::{Font, FontSettings};
@@ -12,6 +12,8 @@ pub const CARD_H: f64 = 96.0;
 
 // Always bundle Clawd. Personal sprite sheets are loaded from the user's config at runtime.
 const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
+const CODEX_SPRITE_PNG: &[u8] = include_bytes!("../assets/openai-spin.png");
+const BAE_SPRITE_PNG: &[u8] = include_bytes!("../assets/bae.png");
 
 // macOS and Linux system fonts. Windows fonts are resolved from the Windows directory below.
 // Helvetica.ttc is skipped: fontdue maps U+00B7 to the wrong glyph in it.
@@ -75,6 +77,8 @@ pub struct Sprite {
 
 pub struct Assets {
     sprite: Option<Sprite>,
+    codex_sprite: Option<Sprite>,
+    override_both: bool,
     frame_interval: Duration,
     sprite_size: u32,
     regular: Option<Font>,
@@ -151,12 +155,42 @@ impl Sprite {
 }
 
 impl Assets {
+    #[cfg(test)]
     pub fn frames(&self) -> usize {
         self.sprite.as_ref().map_or(1, Sprite::frames)
     }
 
+    #[cfg(test)]
     pub fn frame_interval(&self) -> Duration {
         self.frame_interval
+    }
+
+    fn sprite_for(&self, card: &Card) -> Option<&Sprite> {
+        if !self.override_both && card.agent == "codex" {
+            self.codex_sprite.as_ref().or(self.sprite.as_ref())
+        } else {
+            self.sprite.as_ref()
+        }
+    }
+
+    pub fn frames_for(&self, card: &Card) -> usize {
+        self.sprite_for(card).map_or(1, Sprite::frames)
+    }
+
+    pub fn frame_interval_for(&self, card: &Card) -> Duration {
+        if !self.override_both && card.agent == "codex" {
+            crate::anim::WAVE_FRAME
+        } else {
+            self.frame_interval
+        }
+    }
+
+    fn size_for(&self, card: &Card) -> u32 {
+        if !self.override_both && card.agent == "codex" {
+            64
+        } else {
+            self.sprite_size
+        }
     }
 
     pub fn load() -> Assets {
@@ -165,36 +199,56 @@ impl Assets {
 
     fn load_with_animation(animation: &Animation) -> Assets {
         let mut sprite = decode_sprite(SPRITE_PNG).ok();
+        let codex_sprite = decode_sprite(CODEX_SPRITE_PNG).ok();
+        let mut override_both = false;
         let mut frame_interval = crate::anim::WAVE_FRAME;
         let mut sprite_size = 64;
         if animation.enabled {
-            match animation.file.as_deref() {
-                Some(file) if !file.trim().is_empty() => {
-                    let path = crate::config::expand_home(file);
-                    let custom = std::fs::metadata(&path)
-                        .map_err(|e| e.to_string())
-                        .and_then(|m| {
-                            if m.len() > 16 * 1024 * 1024 {
-                                Err("PNG exceeds 16 MiB".to_string())
-                            } else {
-                                std::fs::read(&path).map_err(|e| e.to_string())
+            let choice = match animation.sprite {
+                SpriteChoice::Auto if animation.file.is_some() => SpriteChoice::Custom,
+                other => other,
+            };
+            let selected = match choice {
+                SpriteChoice::Auto => None,
+                SpriteChoice::Clawd => decode_sprite(SPRITE_PNG).ok().map(|s| (s, 64)),
+                SpriteChoice::Codex => decode_sprite(CODEX_SPRITE_PNG).ok().map(|s| (s, 64)),
+                SpriteChoice::Bae => decode_sprite(BAE_SPRITE_PNG)
+                    .ok()
+                    .map(|s| (s, animation.size)),
+                SpriteChoice::Custom => {
+                    if let Some(file) = animation.file.as_deref().filter(|s| !s.trim().is_empty()) {
+                        let path = crate::config::expand_home(file);
+                        let custom = std::fs::metadata(&path)
+                            .map_err(|e| e.to_string())
+                            .and_then(|m| {
+                                if m.len() > 16 * 1024 * 1024 {
+                                    Err("PNG exceeds 16 MiB".to_string())
+                                } else {
+                                    std::fs::read(&path).map_err(|e| e.to_string())
+                                }
+                            })
+                            .and_then(|bytes| decode_sprite(&bytes));
+                        match custom {
+                            Ok(custom) => Some((custom, animation.size)),
+                            Err(err) => {
+                                crate::log::line(&format!(
+                                    "renderer: custom sprite {}: {err}; using bundled defaults",
+                                    path.display()
+                                ));
+                                None
                             }
-                        })
-                        .and_then(|bytes| decode_sprite(&bytes));
-                    match custom {
-                        Ok(custom) => {
-                            sprite = Some(custom);
-                            frame_interval =
-                                Duration::from_secs_f64(1.0 / animation.fps.clamp(1.0, 60.0));
-                            sprite_size = animation.size.clamp(32, 88);
                         }
-                        Err(err) => crate::log::line(&format!(
-                            "renderer: custom sprite {}: {err}; using Clawd",
-                            path.display()
-                        )),
+                    } else {
+                        crate::log::line("renderer: custom animation selected without a PNG file");
+                        None
                     }
                 }
-                _ => crate::log::line("renderer: animation enabled without file; using Clawd"),
+            };
+            if let Some((selected, size)) = selected {
+                sprite = Some(selected);
+                override_both = true;
+                sprite_size = size.clamp(32, 88);
+                frame_interval = Duration::from_secs_f64(1.0 / animation.fps.clamp(1.0, 60.0));
             }
         }
         let regular = windows_font(false)
@@ -210,6 +264,8 @@ impl Assets {
         }
         Assets {
             sprite,
+            codex_sprite,
+            override_both,
             frame_interval,
             sprite_size,
             regular,
@@ -337,10 +393,10 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    if let Some(sp) = &assets.sprite {
+    if let Some(sp) = assets.sprite_for(card) {
         // Nearest-neighbour scaling fits any square sprite into its configured
         // logical-pixel area, including fractional display scale factors.
-        let side = (assets.sprite_size as f64 * scale).round().max(1.0) as usize;
+        let side = (assets.size_for(card) as f64 * scale).round().max(1.0) as usize;
         // Keep the art centered in the 96px left column, leaving the text
         // anchored at x=96 even for a larger custom character.
         let ox = ((96.0 * scale).round() as usize).saturating_sub(side) / 2;
@@ -463,6 +519,7 @@ mod tests {
             ts: 0,
             pid: 0,
             app: String::new(),
+            agent: String::new(),
         };
         let frame_0 = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
         let frame_1 = render(&card, &assets, 1, CARD_W as u32, CARD_H as u32, 1.0);
@@ -534,6 +591,7 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let custom = Animation {
             enabled: true,
+            sprite: crate::config::SpriteChoice::Auto,
             file: Some(path.to_string_lossy().into()),
             fps: 12.5,
             size: 88,
@@ -543,9 +601,15 @@ mod tests {
         assert_eq!(assets.frame_interval(), Duration::from_millis(80));
         assert_eq!(assets.sprite_size, 88);
         let card = crate::core::Card {
-            session_id: "test".into(), kind: crate::protocol::Kind::Done,
-            project: "test".into(), body: "Done".into(),
-            badge: None, ts: 0, pid: 0, app: String::new(),
+            session_id: "test".into(),
+            kind: crate::protocol::Kind::Done,
+            project: "test".into(),
+            body: "Done".into(),
+            badge: None,
+            ts: 0,
+            pid: 0,
+            app: String::new(),
+            agent: String::new(),
         };
         // A large custom sprite retains its original opaque pixel colors even
         // at fractional DPI, with no interpolated or semitransparent edges.
@@ -558,7 +622,10 @@ mod tests {
             let oy = (h as usize - side) / 2;
             // Top-left source pixel is pure red and fully opaque.
             let pos = (oy + side / 8) * w as usize + ox + side / 8;
-            assert_eq!(image[pos], 0xffff_0000, "custom sprite blurred at scale {scale}");
+            assert_eq!(
+                image[pos], 0xffff_0000,
+                "custom sprite blurred at scale {scale}"
+            );
         }
         let pixels = &assets.sprite.unwrap().rgba;
         assert_eq!(
@@ -615,6 +682,7 @@ mod tests {
             ts: 0,
             pid: 0,
             app: String::new(),
+            agent: String::new(),
         };
         let without_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
         card.body = "Finished the Codex task".into();
@@ -631,6 +699,131 @@ mod tests {
             body_changed,
             "Notification body must affect rendered pixels"
         );
+    }
+
+    #[test]
+    fn codex_cards_use_the_openai_sprite_sheet() {
+        use super::{render, Assets, CARD_H, CARD_W};
+        use crate::core::Card;
+        use crate::protocol::Kind;
+
+        let assets = Assets::load_with_animation(&crate::config::Animation::default());
+        let sheet = assets.codex_sprite.as_ref().expect("codex sprite embedded");
+        assert_eq!((sheet.w, sheet.h, sheet.frames()), (128, 32, 4));
+
+        let mut card = Card {
+            session_id: "t".into(),
+            kind: Kind::Done,
+            project: "p".into(),
+            body: String::new(),
+            badge: None,
+            ts: 0,
+            pid: 0,
+            app: String::new(),
+            agent: String::new(),
+        };
+        let draw = |c: &Card, f| render(c, &assets, f, CARD_W as u32, CARD_H as u32, 1.0);
+        let claude = draw(&card, 0);
+        card.agent = "codex".into();
+        assert_eq!(assets.frames_for(&card), 4);
+        assert_eq!(assets.frame_interval_for(&card), crate::anim::WAVE_FRAME);
+        let codex: Vec<Vec<u32>> = (0..4).map(|f| draw(&card, f)).collect();
+        assert_ne!(claude, codex[0], "codex card must not use the Clawd sprite");
+        for f in 1..4 {
+            assert_ne!(
+                codex[0], codex[f],
+                "frame {f} must differ so the logo spins"
+            );
+        }
+    }
+
+    #[test]
+    fn bae_and_named_sprites_override_both_agents_only_when_enabled() {
+        use super::{render, Assets, CARD_H, CARD_W};
+        use crate::config::{Animation, SpriteChoice};
+        use crate::core::Card;
+        use crate::protocol::Kind;
+        use std::time::Duration;
+
+        let mut card = Card {
+            session_id: "test".into(),
+            kind: Kind::Done,
+            project: "project".into(),
+            body: "Done".into(),
+            badge: None,
+            ts: 0,
+            pid: 0,
+            app: String::new(),
+            agent: String::new(),
+        };
+        let defaults = Assets::load_with_animation(&Animation::default());
+        let bae_config = Animation {
+            enabled: true,
+            sprite: SpriteChoice::Bae,
+            fps: 11.0,
+            ..Animation::default()
+        };
+        let bae = Assets::load_with_animation(&bae_config);
+        assert_eq!(bae.frames_for(&card), 11);
+        assert_eq!(bae.sprite_size, 88);
+        assert_eq!(
+            bae.frame_interval_for(&card),
+            Duration::from_secs_f64(1.0 / 11.0)
+        );
+        assert_eq!(
+            (
+                bae.sprite.as_ref().unwrap().w,
+                bae.sprite.as_ref().unwrap().h
+            ),
+            (704, 64)
+        );
+        assert!(bae
+            .sprite
+            .as_ref()
+            .unwrap()
+            .rgba
+            .chunks_exact(4)
+            .all(|px| px[3] == 0 || px[3] == 255));
+        let draw = |assets: &Assets, card: &Card, frame| {
+            render(card, assets, frame, CARD_W as u32, CARD_H as u32, 1.0)
+        };
+        assert_ne!(draw(&defaults, &card, 0), draw(&bae, &card, 0));
+        assert_ne!(draw(&bae, &card, 0), draw(&bae, &card, 1));
+
+        card.agent = "codex".into();
+        assert_eq!(bae.frames_for(&card), 11);
+        assert_eq!(
+            bae.frame_interval_for(&card),
+            Duration::from_secs_f64(1.0 / 11.0)
+        );
+        assert_ne!(draw(&defaults, &card, 0), draw(&bae, &card, 0));
+
+        let codex_for_all = Assets::load_with_animation(&Animation {
+            sprite: SpriteChoice::Codex,
+            ..bae_config.clone()
+        });
+        assert_eq!(codex_for_all.frames_for(&card), 4);
+        assert_eq!(codex_for_all.size_for(&card), 64);
+        assert_eq!(draw(&codex_for_all, &card, 0), draw(&defaults, &card, 0));
+        card.agent.clear();
+        assert_eq!(
+            draw(&codex_for_all, &card, 0),
+            draw(
+                &defaults,
+                &Card {
+                    agent: "codex".into(),
+                    ..card.clone()
+                },
+                0
+            )
+        );
+
+        let disabled = Assets::load_with_animation(&Animation {
+            enabled: false,
+            ..bae_config
+        });
+        assert_eq!(disabled.frames_for(&card), 4);
+        assert_eq!(draw(&disabled, &card, 0), draw(&defaults, &card, 0));
     }
 
     #[test]

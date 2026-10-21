@@ -324,14 +324,19 @@ impl Wl {
             let Some(alpha) = c.timing.alpha(now, hold) else {
                 continue;
             };
-            let frame =
-                c.timing
-                    .wave_frame(now, self.assets.frames(), self.assets.frame_interval());
+            let frame = c.timing.wave_frame(
+                now,
+                self.assets.frames_for(&c.card),
+                self.assets.frame_interval_for(&c.card),
+            );
             if c.configured && (frame != c.frame || (alpha - c.drawn_alpha).abs() > 0.004) {
                 c.frame = frame;
                 paint(&mut self.pool, &self.assets, c, alpha);
             }
-            if let Some(wake) = c.timing.next_wake(now, hold, self.assets.frame_interval()) {
+            if let Some(wake) =
+                c.timing
+                    .next_wake(now, hold, self.assets.frame_interval_for(&c.card))
+            {
                 next = next.min(wake);
             }
         }

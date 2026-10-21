@@ -88,6 +88,7 @@ fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
         ts: protocol::now_ms(),
         pid: claude_pid(),
         app: terminal_app(),
+        agent: String::new(),
     }
 }
 

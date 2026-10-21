@@ -35,7 +35,7 @@ fn usage() -> ! {
          \x20 hook EVENT        run as a Claude Code hook (reads JSON on stdin)\n\
          \x20 codex-hook EVENT  run as a Codex lifecycle hook (reads JSON on stdin)\n\
          \x20 daemon [--headless]\n\
-         \x20 test              show one card of each kind\n\
+         \x20 test [codex]      show one card of each kind\n\
          \x20 reload            make the running daemon re-read config.toml\n\
          \x20 install [--force] add clawdtoast's hooks to ~/.claude/settings.json\n\
          \x20 uninstall         remove them again\n\
@@ -58,7 +58,8 @@ fn main() {
         ["daemon"] => daemon::run(false),
         ["daemon", "--headless"] => daemon::run(true),
         ["overlay"] => overlay::run(),
-        ["test"] => self_test(),
+        ["test"] => self_test(""),
+        ["test", "codex"] => self_test("codex"),
         ["reload"] => {
             if shim::send(&Msg::Reload).is_err() {
                 println!("daemon is not running; config is read when it starts");
@@ -81,7 +82,7 @@ fn finish(r: Result<(), String>) {
 }
 
 /// Shows one card of each kind so placement and sound can be checked by eye and ear.
-fn self_test() {
+fn self_test(agent: &str) {
     if let Err(e) = shim::ensure_daemon() {
         eprintln!("could not start daemon: {e}");
         std::process::exit(1);
@@ -104,6 +105,7 @@ fn self_test() {
             ts: protocol::now_ms(),
             pid: 0,
             app: String::new(),
+            agent: agent.into(),
         };
         let _ = shim::send(&m);
         std::thread::sleep(std::time::Duration::from_millis(1200));

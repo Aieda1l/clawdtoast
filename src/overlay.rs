@@ -365,14 +365,19 @@ impl ApplicationHandler<Ev> for App {
                 continue;
             };
             platform::set_alpha(&s.window, a);
-            let frame = s
-                .timing
-                .wave_frame(now, assets.frames(), assets.frame_interval());
+            let frame = s.timing.wave_frame(
+                now,
+                assets.frames_for(&s.card),
+                assets.frame_interval_for(&s.card),
+            );
             if frame != s.frame {
                 s.frame = frame;
                 draw(assets, s, self.opaque);
             }
-            if let Some(wake) = s.timing.next_wake(now, hold, assets.frame_interval()) {
+            if let Some(wake) = s
+                .timing
+                .next_wake(now, hold, assets.frame_interval_for(&s.card))
+            {
                 next = next.min(wake);
             }
         }

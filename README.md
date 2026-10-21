@@ -115,13 +115,16 @@ idle_prompt = true
 subagent_stop = false
 
 [animation]
-enabled = false             # set true to use a custom sprite
-# file = "~/sprites/my-character.png"
-fps = 8                     # custom animation speed; 1-60 fps (e.g. 12.5)
-size = 88                   # custom character size in logical pixels (32-88)
+enabled = false             # set true to choose a sprite for all agents
+sprite = "auto"             # auto, clawd, codex, bae, or custom
+# file = "~/sprites/my-character.png"  # custom RGBA PNG sprite sheet
+fps = 8                     # selected animation speed; 1-60 fps (e.g. 11 for Bae)
+size = 88                   # Bae/custom character size in logical pixels (32-88)
 ```
 
-To use your own character, set `animation.enabled = true` and `file` to a local **RGBA PNG** sprite sheet. Use a single square image for a static sprite or place square animation frames side by side in one horizontal PNG strip (for example, 11 frames of 64x64 pixels make a 704x64 image). The renderer scales each custom frame into a configurable 32-88 logical-pixel slot (`size = 88` by default); bundled Clawd stays 64px. Nearest-neighbor sampling is used at all display scales, with hard transparency edges (alpha below 128 becomes transparent, alpha 128 or above becomes opaque). `fps` controls playback, including while hovering; hover pauses only the dismissal timer. Animated MP4/GIF files must first be converted into a PNG sheet; no video decoder runs in the notification process. Leave the setting disabled to use bundled Clawd. If the file is missing, malformed, or unsupported, the overlay logs the error and shows Clawd instead. Changes take effect for new overlay processes; `clawdtoast reload` can also be used after editing the config.
+By default (`enabled = false`), Claude notifications display Clawd and Codex notifications display the 4-frame OpenAI spinner. To choose one for **all** notifications, set `enabled = true` and `sprite = "clawd"`, `"codex"`, or `"bae"`; Bae is bundled as an 11-frame 64px sheet, displayed at 88 logical pixels by default. For Bae's original frame rate, set `fps = 11`. To use your own character, set `enabled = true`, `sprite = "custom"`, and `file` to a local **RGBA PNG** sprite sheet. Existing configs using `enabled = true` with just `file` continue to work.
+
+Use one square PNG for a static sprite, or square frames side by side in a horizontal PNG strip (for example, 11 frames of 64x64 pixels make a 704x64 sheet). Nearest-neighbor scaling keeps pixel edges sharp at all display scales; alpha is thresholded to fully transparent or fully opaque. `fps` controls the selected sprite's animation while hovering, which pauses only the dismissal timer. MP4/GIF files must first be converted to PNG strips. When a custom file is missing or invalid, the app logs the error and uses the original per-agent defaults. Sprite configuration changes take effect for new overlay processes; use `clawdtoast reload` after editing the config.
 
 Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir), `CLAWDTOAST_BACKEND` (Linux: `wayland`, `x11` or `notify`), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_PID` (the agent pid to watch and focus), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). `CODEX_HOME` overrides Codex's configuration directory. Log: `clawdtoast.log` in the state dir.
 
@@ -173,7 +176,7 @@ On Linux (measured in a container): binary 1.8 MB, idle daemon 3.9 MB, shim p95 
 - **Font:** loads Arial (macOS, Windows) or DejaVu/Liberation/Noto (Linux) from the system at runtime. DejaVu is wider than Arial, so long titles are cut off sooner on Linux.
 - **Linux coverage:** verified on Xvfb and headless sway (placement, stacking, timeout, config position, fallback, lifecycle). Not tested: a real GNOME, KDE or Hyprland session, multiple monitors, HiDPI, pointer hover and click (the headless setups have no pointer), X11 click-to-focus, fades under a real compositor, and a real notification daemon (a stub `notify-send` stands in).
 - **Do Not Disturb / Focus Assist:** not respected; neither OS exposes a public API for it.
-- **Artwork:** The bundled default is `assets/clawd.png` (four 32x32 frames). Custom artwork is opt-in through `[animation]` in the config, loaded from disk without rebuilding. Source video compression artifacts may remain visible in sprite sheets extracted from MP4s; converting to PNG avoids additional losses but cannot reconstruct original pixel colors.
+- **Artwork:** Bundled sprites are `assets/clawd.png` (Claude Code), `assets/openai-spin.png` (Codex), and `assets/bae.png` (optional). Personal artwork is opt-in via `[animation]`, loaded at runtime. Source video compression artifacts may remain visible in sheets extracted from MP4s; converting to PNG avoids further losses but cannot restore original pixel colors.
 - **Overlay race:** an alert that arrives in the instant the idle overlay exits is dropped.
 - `vendor/softbuffer` is softbuffer 0.4.8 with a one-line patch so macOS honours alpha (see `vendor/softbuffer/PATCH.md`). `fontdue` is pinned to 0.9.3 because 0.9.5 needs a newer Rust than 1.86.
 

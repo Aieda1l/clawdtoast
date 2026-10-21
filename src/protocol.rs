@@ -59,6 +59,9 @@ pub enum Msg {
         /// fallback for sessions with no GUI app above them (background sessions).
         #[serde(default)]
         app: String,
+        /// Which agent sent the alert ("codex"); empty means Claude Code. Picks the card sprite.
+        #[serde(default)]
+        agent: String,
     },
     /// Re-read config.toml.
     Reload,
@@ -107,6 +110,7 @@ mod tests {
             ts: 5,
             pid: 0,
             app: String::new(),
+            agent: String::new(),
         };
         let back = decode(&encode(&m)).unwrap();
         assert!(matches!(back, Msg::Alert { kind: Kind::Permission, .. }));
