@@ -9,6 +9,7 @@ pub const CARD_W: f64 = 320.0;
 pub const CARD_H: f64 = 96.0;
 
 const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
+const CODEX_SPRITE_PNG: &[u8] = include_bytes!("../assets/openai-spin.png");
 
 // macOS and Linux system fonts. Windows fonts are resolved from the Windows directory below.
 // Helvetica.ttc is skipped: fontdue maps U+00B7 to the wrong glyph in it.
@@ -60,6 +61,7 @@ pub struct Sprite {
 
 pub struct Assets {
     sprite: Option<Sprite>,
+    codex_sprite: Option<Sprite>,
     regular: Option<Font>,
     bold: Option<Font>,
 }
@@ -92,8 +94,8 @@ fn windows_font(_bold: bool) -> Option<Font> {
     None
 }
 
-fn load_sprite() -> Option<Sprite> {
-    let mut reader = png::Decoder::new(SPRITE_PNG).read_info().ok()?;
+fn load_sprite(png_bytes: &[u8]) -> Option<Sprite> {
+    let mut reader = png::Decoder::new(png_bytes).read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;
     (info.color_type == png::ColorType::Rgba && info.bit_depth == png::BitDepth::Eight).then(|| Sprite {
@@ -114,6 +116,14 @@ impl Assets {
         self.sprite.as_ref().map_or(1, Sprite::frames)
     }
 
+    fn sprite_for(&self, card: &Card) -> Option<&Sprite> {
+        if card.agent == "codex" {
+            self.codex_sprite.as_ref().or(self.sprite.as_ref())
+        } else {
+            self.sprite.as_ref()
+        }
+    }
+
     pub fn load() -> Assets {
         let regular = windows_font(false)
             .or_else(|| load_font(FONT_CANDIDATES))
@@ -126,7 +136,7 @@ impl Assets {
         if regular.is_none() && bold.is_none() {
             crate::log::line("renderer: no system fonts found; notification text cannot render");
         }
-        Assets { sprite: load_sprite(), regular, bold }
+        Assets { sprite: load_sprite(SPRITE_PNG), codex_sprite: load_sprite(CODEX_SPRITE_PNG), regular, bold }
     }
 }
 
@@ -232,7 +242,7 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    if let Some(sp) = &assets.sprite {
+    if let Some(sp) = assets.sprite_for(card) {
         // Whole-number upscale keeps the pixel art crisp.
         let k = ((2.0 * scale).round() as usize).max(1);
         let (ox, oy) = ((16.0 * s) as usize, ((CARD_H as f32 * s) as usize).saturating_sub(sp.h * k) / 2);
@@ -319,7 +329,7 @@ mod tests {
 
         let mut card = Card {
             session_id: "test".into(), kind: Kind::Done, project: "project".into(),
-            body: String::new(), badge: None, ts: 0, pid: 0, app: String::new(),
+            body: String::new(), badge: None, ts: 0, pid: 0, app: String::new(), agent: String::new(),
         };
         let without_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
         card.body = "Finished the Codex task".into();
@@ -333,6 +343,30 @@ mod tests {
             })
         });
         assert!(body_changed, "Notification body must affect rendered pixels");
+    }
+
+    #[test]
+    fn codex_cards_use_the_openai_sprite_sheet() {
+        use super::{render, Assets, CARD_H, CARD_W};
+        use crate::core::Card;
+        use crate::protocol::Kind;
+
+        let assets = Assets::load();
+        let sheet = assets.codex_sprite.as_ref().expect("codex sprite embedded");
+        assert_eq!((sheet.w, sheet.h, sheet.frames()), (128, 32, 4));
+
+        let mut card = Card {
+            session_id: "t".into(), kind: Kind::Done, project: "p".into(),
+            body: String::new(), badge: None, ts: 0, pid: 0, app: String::new(), agent: String::new(),
+        };
+        let draw = |c: &Card, f| render(c, &assets, f, CARD_W as u32, CARD_H as u32, 1.0);
+        let claude = draw(&card, 0);
+        card.agent = "codex".into();
+        let codex: Vec<Vec<u32>> = (0..4).map(|f| draw(&card, f)).collect();
+        assert_ne!(claude, codex[0], "codex card must not use the Clawd sprite");
+        for f in 1..4 {
+            assert_ne!(codex[0], codex[f], "frame {f} must differ so the logo spins");
+        }
     }
 
     #[test]
