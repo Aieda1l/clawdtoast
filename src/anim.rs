@@ -1,5 +1,5 @@
 //! Card timing shared by the winit and Wayland overlays: fade in, hold (paused while hovered),
-//! fade out, plus the wave animation clock.
+//! fade out, plus an independent animation clock.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::time::{Duration, Instant};
@@ -7,17 +7,23 @@ use std::time::{Duration, Instant};
 pub const FADE_IN: Duration = Duration::from_millis(150);
 pub const FADE_OUT: Duration = Duration::from_millis(300);
 pub const FRAME: Duration = Duration::from_millis(16);
-pub const WAVE_FRAME: Duration = Duration::from_millis(125); // 8 fps
+pub const WAVE_FRAME: Duration = Duration::from_millis(125); // Clawd: 8 fps
 pub const IDLE_EXIT: Duration = Duration::from_secs(3);
 
 pub struct Timing {
     pub shown_at: Instant,
     pub hover_since: Option<Instant>,
+    animation_since: Instant,
 }
 
 impl Timing {
     pub fn new() -> Timing {
-        Timing { shown_at: Instant::now(), hover_since: None }
+        let now = Instant::now();
+        Timing {
+            shown_at: now,
+            hover_since: None,
+            animation_since: now,
+        }
     }
 
     pub fn restart(&mut self) {
@@ -34,7 +40,9 @@ impl Timing {
 
     /// Time on screen so far, frozen while the pointer hovers.
     pub fn age(&self, now: Instant) -> Duration {
-        self.hover_since.unwrap_or(now).saturating_duration_since(self.shown_at)
+        self.hover_since
+            .unwrap_or(now)
+            .saturating_duration_since(self.shown_at)
     }
 
     /// Opacity now, or None once the card has faded out.
@@ -51,22 +59,33 @@ impl Timing {
         }
     }
 
-    /// Wave frame to show now, out of `frames`.
-    pub fn wave_frame(&self, now: Instant, frames: usize) -> usize {
-        (self.age(now).as_millis() / WAVE_FRAME.as_millis()) as usize % frames.max(1)
+    /// Animation keeps playing while hovering pauses the card dismissal timer.
+    pub fn wave_frame(&self, now: Instant, frames: usize, frame_interval: Duration) -> usize {
+        (now.saturating_duration_since(self.animation_since)
+            .as_nanos()
+            / frame_interval.as_nanos().max(1)) as usize
+            % frames.max(1)
     }
 
-    /// Earliest instant this card needs a redraw or removal, or None while paused by hover.
-    pub fn next_wake(&self, now: Instant, hold: Duration) -> Option<Instant> {
+    /// Earliest instant this card needs an animation tick, fade redraw, or removal.
+    pub fn next_wake(
+        &self,
+        now: Instant,
+        hold: Duration,
+        frame_interval: Duration,
+    ) -> Option<Instant> {
         let t = self.age(now);
-        if self.hover_since.is_some() && t >= FADE_IN && t < hold {
-            return None; // paused while hovered: wake only on pointer events
-        }
         if t < FADE_IN || t >= hold {
             Some(now + FRAME)
         } else {
-            let to_frame = WAVE_FRAME - Duration::from_millis((t.as_millis() % WAVE_FRAME.as_millis()) as u64);
-            Some((now + to_frame).min(self.shown_at + hold))
+            let tick = frame_interval.as_nanos().max(1);
+            let animation_age = now.saturating_duration_since(self.animation_since);
+            let to_frame = Duration::from_nanos((tick - animation_age.as_nanos() % tick) as u64);
+            if self.hover_since.is_some() {
+                Some(now + to_frame)
+            } else {
+                Some((now + to_frame).min(self.shown_at + hold))
+            }
         }
     }
 }
@@ -92,5 +111,39 @@ mod tests {
         t.hover(true);
         let frozen = t.age(t.shown_at + Duration::from_secs(100));
         assert_eq!(frozen, t.hover_since.unwrap() - t.shown_at);
+        let tick = Duration::from_millis(80);
+        let later = t.shown_at + Duration::from_millis(410);
+        assert_eq!(t.wave_frame(later, 11, tick), 5);
+        // Hover began during fade-in, so the fade still needs a 16ms tick.
+        assert_eq!(t.next_wake(later, Duration::from_secs(5), tick), Some(later + FRAME));
+    }
+
+    #[test]
+    fn custom_frame_rate_controls_frames_and_wake() {
+        let t = Timing::new();
+        let tick = Duration::from_millis(80);
+        let now = t.shown_at + Duration::from_millis(170);
+        assert_eq!(t.wave_frame(now, 11, tick), 2);
+        assert_eq!(
+            t.next_wake(now, Duration::from_secs(5), tick),
+            Some(now + Duration::from_millis(70))
+        );
+    }
+
+    #[test]
+    fn hover_does_not_reset_animation_phase_after_exit() {
+        let mut t = Timing::new();
+        let tick = Duration::from_millis(80);
+        t.hover_since = Some(t.shown_at + Duration::from_millis(200));
+        let later = t.shown_at + Duration::from_millis(410);
+        // Simulate a completed hover without relying on wall-clock sleeps.
+        t.shown_at += Duration::from_millis(210);
+        t.hover_since = None;
+        assert_eq!(t.age(later), Duration::from_millis(200));
+        assert_eq!(t.wave_frame(later, 11, tick), 5);
+        assert_eq!(
+            t.next_wake(later, Duration::from_secs(5), tick),
+            Some(later + Duration::from_millis(70))
+        );
     }
 }

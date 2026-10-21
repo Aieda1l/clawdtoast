@@ -16,20 +16,23 @@ use crate::{geom, log, protocol, render};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
-use smithay_client_toolkit::reexports::client::protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
+use smithay_client_toolkit::reexports::client::protocol::{
+    wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
+};
 use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::wlr_layer::{
-    Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
+    Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+    LayerSurfaceConfigure,
 };
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry, delegate_seat,
-    delegate_shm, registry_handlers,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm, registry_handlers,
 };
 use std::fs::File;
 use std::io::Write;
@@ -80,13 +83,19 @@ struct Wl {
 /// while. Errs, without having read stdin, if the compositor cannot host it.
 pub fn run() -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|e| format!("connect: {e}"))?;
-    let (globals, mut queue) = registry_queue_init::<Wl>(&conn).map_err(|e| format!("registry: {e}"))?;
+    let (globals, mut queue) =
+        registry_queue_init::<Wl>(&conn).map_err(|e| format!("registry: {e}"))?;
     let qh = queue.handle();
-    let compositor = CompositorState::bind(&globals, &qh).map_err(|e| format!("wl_compositor: {e:?}"))?;
-    let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| "compositor has no wlr-layer-shell".to_string())?;
+    let compositor =
+        CompositorState::bind(&globals, &qh).map_err(|e| format!("wl_compositor: {e:?}"))?;
+    let layer_shell = LayerShell::bind(&globals, &qh)
+        .map_err(|_| "compositor has no wlr-layer-shell".to_string())?;
     let shm = Shm::bind(&globals, &qh).map_err(|e| format!("wl_shm: {e:?}"))?;
-    let pool = SlotPool::new(4 * 4 * render::CARD_W as usize * render::CARD_H as usize, &shm)
-        .map_err(|e| format!("shm pool: {e}"))?;
+    let pool = SlotPool::new(
+        4 * 4 * render::CARD_W as usize * render::CARD_H as usize,
+        &shm,
+    )
+    .map_err(|e| format!("shm pool: {e}"))?;
 
     let (tx, rx) = mpsc::channel();
     let (wake_rd, wake_wr) = wake_pipe().map_err(|e| format!("pipe: {e}"))?;
@@ -138,12 +147,25 @@ pub fn run() -> Result<(), String> {
             return Ok(());
         }
         // Wait for the compositor, a new card, or the next animation tick.
-        let Some(guard) = queue.prepare_read() else { continue };
+        let Some(guard) = queue.prepare_read() else {
+            continue;
+        };
         let mut fds = [
-            libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: wake_rd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+            libc::pollfd {
+                fd: guard.connection_fd().as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: wake_rd.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
-        let ms = wake_at.saturating_duration_since(Instant::now()).as_millis().min(i32::MAX as u128) as i32;
+        let ms = wake_at
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(i32::MAX as u128) as i32;
         let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, ms + 1) };
         if n > 0 && fds[0].revents & libc::POLLIN != 0 {
             if let Err(e) = guard.read() {
@@ -155,7 +177,9 @@ pub fn run() -> Result<(), String> {
         }
         if n > 0 && fds[1].revents & libc::POLLIN != 0 {
             let mut buf = [0u8; 64];
-            while unsafe { libc::read(wake_rd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) } > 0 {}
+            while unsafe { libc::read(wake_rd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) } > 0
+            {
+            }
         }
         if let Err(e) = queue.dispatch_pending(&mut wl) {
             log::line(&format!("wayland: dispatch: {e}"));
@@ -240,7 +264,13 @@ impl Wl {
     fn open(&mut self, qh: &QueueHandle<Wl>, card: Card) {
         let slot = self.cards.len();
         let surface = self.compositor.create_surface(qh);
-        let layer = self.layer_shell.create_layer_surface(qh, surface, Layer::Overlay, Some("clawdtoast"), None);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Overlay,
+            Some("clawdtoast"),
+            None,
+        );
         layer.set_anchor(anchor(self.position));
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(render::CARD_W as u32, render::CARD_H as u32);
@@ -249,7 +279,10 @@ impl Wl {
         // Initial commit without a buffer; the compositor answers with `configure`, then we draw.
         layer.commit();
         if card.ts > 0 {
-            log::line(&format!("latency_ms={}", protocol::now_ms().saturating_sub(card.ts)));
+            log::line(&format!(
+                "latency_ms={}",
+                protocol::now_ms().saturating_sub(card.ts)
+            ));
         }
         self.cards.push(WCard {
             layer,
@@ -279,21 +312,26 @@ impl Wl {
     fn tick(&mut self, qh: &QueueHandle<Wl>) -> Tick {
         let now = Instant::now();
         let hold = self.duration;
-        let expired: Vec<usize> =
-            (0..self.cards.len()).filter(|&i| self.cards[i].timing.alpha(now, hold).is_none()).collect();
+        let expired: Vec<usize> = (0..self.cards.len())
+            .filter(|&i| self.cards[i].timing.alpha(now, hold).is_none())
+            .collect();
         for i in expired.into_iter().rev() {
             self.remove(qh, i, "timeout");
         }
 
         let mut next = now + Duration::from_secs(3600);
         for c in self.cards.iter_mut() {
-            let Some(alpha) = c.timing.alpha(now, hold) else { continue };
-            let frame = c.timing.wave_frame(now, self.assets.frames());
+            let Some(alpha) = c.timing.alpha(now, hold) else {
+                continue;
+            };
+            let frame =
+                c.timing
+                    .wave_frame(now, self.assets.frames(), self.assets.frame_interval());
             if c.configured && (frame != c.frame || (alpha - c.drawn_alpha).abs() > 0.004) {
                 c.frame = frame;
                 paint(&mut self.pool, &self.assets, c, alpha);
             }
-            if let Some(wake) = c.timing.next_wake(now, hold) {
+            if let Some(wake) = c.timing.next_wake(now, hold, self.assets.frame_interval()) {
                 next = next.min(wake);
             }
         }
@@ -309,7 +347,9 @@ impl Wl {
     }
 
     fn index_of(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
-        self.cards.iter().position(|c| c.layer.wl_surface() == surface)
+        self.cards
+            .iter()
+            .position(|c| c.layer.wl_surface() == surface)
     }
 }
 
@@ -329,13 +369,34 @@ impl CompositorHandler for Wl {
         }
     }
 
-    fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
+    fn transform_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: wl_output::Transform,
+    ) {
+    }
 
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
 
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
 
-    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
 }
 
 impl OutputHandler for Wl {
@@ -353,13 +414,30 @@ impl OutputHandler for Wl {
 impl LayerShellHandler for Wl {
     fn closed(&mut self, _: &Connection, qh: &QueueHandle<Self>, layer: &LayerSurface) {
         // The compositor took the surface away (output unplugged): treat it as dismissed.
-        if let Some(i) = self.cards.iter().position(|c| c.layer.wl_surface() == layer.wl_surface()) {
+        if let Some(i) = self
+            .cards
+            .iter()
+            .position(|c| c.layer.wl_surface() == layer.wl_surface())
+        {
             self.remove(qh, i, "closed by compositor");
         }
     }
 
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface, _: LayerSurfaceConfigure, _: u32) {
-        let Some(i) = self.cards.iter().position(|c| c.layer.wl_surface() == layer.wl_surface()) else { return };
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        layer: &LayerSurface,
+        _: LayerSurfaceConfigure,
+        _: u32,
+    ) {
+        let Some(i) = self
+            .cards
+            .iter()
+            .position(|c| c.layer.wl_surface() == layer.wl_surface())
+        else {
+            return;
+        };
         let c = &mut self.cards[i];
         c.configured = true;
         // Start invisible; the next tick fades it in. Painting here keeps the first frame blank
@@ -375,7 +453,13 @@ impl SeatHandler for Wl {
 
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 
-    fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, cap: Capability) {
+    fn new_capability(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        cap: Capability,
+    ) {
         if cap == Capability::Pointer && self.pointer.is_none() {
             match self.seat_state.get_pointer(qh, &seat) {
                 Ok(p) => self.pointer = Some(p),
@@ -384,7 +468,13 @@ impl SeatHandler for Wl {
         }
     }
 
-    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, cap: Capability) {
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+        cap: Capability,
+    ) {
         if cap == Capability::Pointer {
             if let Some(p) = self.pointer.take() {
                 p.release();
@@ -396,15 +486,25 @@ impl SeatHandler for Wl {
 }
 
 impl PointerHandler for Wl {
-    fn pointer_frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        _: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
         for event in events {
-            let Some(i) = self.index_of(&event.surface) else { continue };
+            let Some(i) = self.index_of(&event.surface) else {
+                continue;
+            };
             match event.kind {
                 PointerEventKind::Enter { .. } => self.cards[i].timing.hover(true),
                 PointerEventKind::Leave { .. } => self.cards[i].timing.hover(false),
                 // A click dismisses the card. Wayland has no way to raise another client's window,
                 // so unlike macOS and X11 it cannot also focus the terminal.
-                PointerEventKind::Press { button: BTN_LEFT, .. } => {
+                PointerEventKind::Press {
+                    button: BTN_LEFT, ..
+                } => {
                     self.remove(qh, i, "click");
                     return; // indices shifted
                 }

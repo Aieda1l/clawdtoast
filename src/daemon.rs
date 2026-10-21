@@ -27,7 +27,10 @@ pub fn run(headless: bool) {
     let Some(listener) = bind() else { return }; // another daemon is already serving
     let _ = std::fs::create_dir_all(paths::support_dir()); // on Linux the socket lives elsewhere
     let _ = std::fs::write(paths::daemon_stamp(), stamp().to_string());
-    log::line(&format!("daemon up pid={} headless={headless}", std::process::id()));
+    log::line(&format!(
+        "daemon up pid={} headless={headless}",
+        std::process::id()
+    ));
     run_loop(listener, headless);
     let _ = std::fs::remove_file(paths::daemon_stamp());
     let _ = std::fs::remove_file(paths::socket());
@@ -50,10 +53,19 @@ fn bind() -> Option<Listener> {
 fn spawn_acceptor(listener: Listener, tx: std::sync::mpsc::Sender<Msg>) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            stream.set_read_timeout(Some(Duration::from_millis(200))).ok();
-            // Messages are at most 4 KB; cap a connection so a bad client cannot flood memory.
-            for line in BufReader::new(stream.take(64 * 1024)).lines().map_while(Result::ok) {
-                match protocol::decode(&line) {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .ok();
+            // Each hook sends exactly one newline-delimited message. Don't wait for
+            // a second line or a read timeout after processing it: on Windows the
+            // connection probes and successive hooks otherwise stall the acceptor.
+            let mut line = String::new();
+            if BufReader::new(stream.take(64 * 1024))
+                .read_line(&mut line)
+                .is_ok()
+                && !line.is_empty()
+            {
+                match protocol::decode(line.trim_end()) {
                     Some(m) => {
                         if tx.send(m).is_err() {
                             return;
@@ -75,7 +87,10 @@ impl Overlay {
     fn spawn() -> Option<Overlay> {
         let exe = std::env::current_exe().ok()?;
         let mut cmd = Command::new(exe);
-        cmd.arg("overlay").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.arg("overlay")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         #[cfg(windows)]
         std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
         let mut child = cmd.spawn().ok()?;
@@ -88,9 +103,14 @@ impl Overlay {
     }
 
     fn send(&mut self, card: &Card) -> bool {
-        let Ok(mut line) = serde_json::to_string(card) else { return false };
+        let Ok(mut line) = serde_json::to_string(card) else {
+            return false;
+        };
         line.push('\n');
-        self.stdin.write_all(line.as_bytes()).and_then(|_| self.stdin.flush()).is_ok()
+        self.stdin
+            .write_all(line.as_bytes())
+            .and_then(|_| self.stdin.flush())
+            .is_ok()
     }
 }
 
@@ -121,7 +141,9 @@ fn run_loop(listener: Listener, headless: bool) {
         if overlay.as_mut().is_some_and(|o| !o.alive()) {
             overlay = None;
         }
-        let mut wait = core.next_deadline().saturating_duration_since(Instant::now());
+        let mut wait = core
+            .next_deadline()
+            .saturating_duration_since(Instant::now());
         if overlay.is_some() {
             wait = wait.min(Duration::from_secs(1)); // notice the overlay exiting
         }

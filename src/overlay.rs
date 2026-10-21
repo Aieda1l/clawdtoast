@@ -111,7 +111,10 @@ fn run_winit() -> bool {
     {
         let missing = platform::missing_libs();
         if !missing.is_empty() {
-            log::line(&format!("overlay: X11 libraries not installed: {}", missing.join(", ")));
+            log::line(&format!(
+                "overlay: X11 libraries not installed: {}",
+                missing.join(", ")
+            ));
             return false;
         }
     }
@@ -176,10 +179,20 @@ struct App {
 
 fn draw(assets: &render::Assets, s: &mut Shown, opaque: bool) {
     let size = s.window.inner_size();
-    let (Some(w), Some(h)) = (std::num::NonZeroU32::new(size.width), std::num::NonZeroU32::new(size.height)) else {
+    let (Some(w), Some(h)) = (
+        std::num::NonZeroU32::new(size.width),
+        std::num::NonZeroU32::new(size.height),
+    ) else {
         return;
     };
-    let mut pixels = render::render(&s.card, assets, s.frame, size.width, size.height, s.window.scale_factor());
+    let mut pixels = render::render(
+        &s.card,
+        assets,
+        s.frame,
+        size.width,
+        size.height,
+        s.window.scale_factor(),
+    );
     if opaque {
         render::flatten(&mut pixels);
     }
@@ -228,15 +241,40 @@ impl App {
             Err(e) => return log::line(&format!("softbuffer: {e}")),
         };
         platform::set_alpha(&window, 0.0);
-        let mut s = Shown { window, surface, card, timing: Timing::new(), frame: 0 };
+        let mut s = Shown {
+            window,
+            surface,
+            card,
+            timing: Timing::new(),
+            frame: 0,
+        };
         #[cfg(not(target_os = "linux"))]
-        platform::configure(&s.window, render::CARD_W, render::CARD_H, slot, self.position);
-        draw(self.assets.get_or_insert_with(render::Assets::load), &mut s, self.opaque);
+        platform::configure(
+            &s.window,
+            render::CARD_W,
+            render::CARD_H,
+            slot,
+            self.position,
+        );
+        draw(
+            self.assets.get_or_insert_with(render::Assets::load),
+            &mut s,
+            self.opaque,
+        );
         // X11 maps the window in `configure`, so draw first to keep the first visible frame from being blank.
         #[cfg(target_os = "linux")]
-        platform::configure(&s.window, render::CARD_W, render::CARD_H, slot, self.position);
+        platform::configure(
+            &s.window,
+            render::CARD_W,
+            render::CARD_H,
+            slot,
+            self.position,
+        );
         if s.card.ts > 0 {
-            log::line(&format!("latency_ms={}", protocol::now_ms().saturating_sub(s.card.ts)));
+            log::line(&format!(
+                "latency_ms={}",
+                protocol::now_ms().saturating_sub(s.card.ts)
+            ));
         }
         self.shown.push(s);
     }
@@ -277,7 +315,11 @@ impl ApplicationHandler<Ev> for App {
                 s.card = card;
                 s.timing.restart();
                 s.frame = 0;
-                draw(self.assets.get_or_insert_with(render::Assets::load), s, self.opaque);
+                draw(
+                    self.assets.get_or_insert_with(render::Assets::load),
+                    s,
+                    self.opaque,
+                );
             }
             Offer::Queued => {}
         }
@@ -286,7 +328,11 @@ impl ApplicationHandler<Ev> for App {
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let Some(i) = self.index_of(id) else { return };
         match event {
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
                 platform::focus_pid(self.shown[i].card.pid, &self.shown[i].card.app);
                 self.remove(el, i, "click")
             }
@@ -305,8 +351,9 @@ impl ApplicationHandler<Ev> for App {
         let now = Instant::now();
         let hold = self.duration;
 
-        let expired: Vec<usize> =
-            (0..self.shown.len()).filter(|&i| self.shown[i].timing.alpha(now, hold).is_none()).collect();
+        let expired: Vec<usize> = (0..self.shown.len())
+            .filter(|&i| self.shown[i].timing.alpha(now, hold).is_none())
+            .collect();
         for i in expired.into_iter().rev() {
             self.remove(el, i, "timeout");
         }
@@ -314,14 +361,18 @@ impl ApplicationHandler<Ev> for App {
         let mut next = now + Duration::from_secs(3600);
         let assets = self.assets.get_or_insert_with(render::Assets::load);
         for s in self.shown.iter_mut() {
-            let Some(a) = s.timing.alpha(now, hold) else { continue };
+            let Some(a) = s.timing.alpha(now, hold) else {
+                continue;
+            };
             platform::set_alpha(&s.window, a);
-            let frame = s.timing.wave_frame(now, assets.frames());
+            let frame = s
+                .timing
+                .wave_frame(now, assets.frames(), assets.frame_interval());
             if frame != s.frame {
                 s.frame = frame;
                 draw(assets, s, self.opaque);
             }
-            if let Some(wake) = s.timing.next_wake(now, hold) {
+            if let Some(wake) = s.timing.next_wake(now, hold, assets.frame_interval()) {
                 next = next.min(wake);
             }
         }

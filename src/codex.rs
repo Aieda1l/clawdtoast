@@ -3,8 +3,9 @@
 use crate::protocol::{self, Kind, Msg};
 use crate::{log, paths, proc, shim, text};
 use serde_json::{json, Value};
-use std::io::Read;
 use std::path::PathBuf;
+use std::io::Read;
+use std::time::{Duration, Instant};
 
 /// (Codex event, argument to `clawdtoast codex-hook`)
 const HOOKS: [(&str, &str); 5] = [
@@ -28,10 +29,7 @@ pub fn run_hook(event: &str) {
 }
 
 fn handle_hook(event: &str) -> Result<(), String> {
-    let mut input = String::new();
-    std::io::stdin()
-        .read_to_string(&mut input)
-        .map_err(|e| e.to_string())?;
+    let value = read_payload()?;
     // Over SSH or a bare VT there is no screen to show a card on.
     #[cfg(target_os = "linux")]
     if std::env::var_os("CLAWDTOAST_HEADLESS").is_none()
@@ -39,7 +37,6 @@ fn handle_hook(event: &str) -> Result<(), String> {
     {
         return Ok(());
     }
-    let value: Value = serde_json::from_str(&input).map_err(|e| e.to_string())?;
     let Some(msg) = translate(event, &value, codex_pid(), shim::terminal_app())? else {
         return Ok(());
     };
@@ -50,6 +47,73 @@ fn handle_hook(event: &str) -> Result<(), String> {
         shim::ensure_daemon()?;
         shim::send(&msg)
     }
+}
+
+/// Codex may keep the hook's stdin pipe open after writing JSON. Read only
+/// bytes already available on the pipe, parse as soon as an object is complete,
+/// and exit within a bounded time even if the writer never closes the pipe.
+fn read_payload() -> Result<Value, String> {
+    const MAX_INPUT: usize = 1024 * 1024;
+    let deadline = Instant::now() + Duration::from_millis(1000);
+    let mut stdin = std::io::stdin();
+    let mut input = Vec::new();
+    loop {
+        if !input.is_empty() {
+            match serde_json::from_slice::<Value>(&input) {
+                Ok(value) => return Ok(value),
+                Err(e) if !e.is_eof() => return Err(format!("invalid hook JSON: {e}")),
+                Err(_) => {}
+            }
+        }
+        if input.len() >= MAX_INPUT {
+            return Err("hook JSON exceeds 1 MiB".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("hook input timed out waiting for complete JSON".into());
+        }
+
+        let available = stdin_available()?;
+        if available == 0 {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        let mut chunk = [0u8; 8192];
+        let to_read = available.min(chunk.len()).min(MAX_INPUT - input.len());
+        let n = stdin.read(&mut chunk[..to_read]).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("hook stdin closed before a complete JSON payload".into());
+        }
+        input.extend_from_slice(&chunk[..n]);
+    }
+}
+
+#[cfg(windows)]
+fn stdin_available() -> Result<usize, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+
+    let handle = std::io::stdin().as_raw_handle();
+    let mut available = 0u32;
+    let ok = unsafe {
+        PeekNamedPipe(handle, std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut available, std::ptr::null_mut())
+    };
+    if ok == 0 {
+        return Err(format!("hook stdin pipe: {}", std::io::Error::last_os_error()));
+    }
+    Ok(available as usize)
+}
+
+#[cfg(unix)]
+fn stdin_available() -> Result<usize, String> {
+    use std::os::fd::AsRawFd;
+    let mut fd = libc::pollfd { fd: std::io::stdin().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    let ready = unsafe { libc::poll(&mut fd, 1, 10) };
+    if ready < 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // Unix pipe reads can return fewer bytes than requested; read one or more
+    // available bytes when poll says the pipe has data or has closed.
+    Ok(if ready == 0 { 0 } else { 8192 })
 }
 
 /// Pure translation of Codex's documented hook inputs into the existing IPC protocol.

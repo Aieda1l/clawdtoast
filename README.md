@@ -63,7 +63,7 @@ and `SubagentStop` to the same card types. `SessionStart` and `SessionEnd` track
 without colliding with Claude sessions. The Codex adapter never approves or denies tool calls.
 Codex does not currently provide a direct equivalent of Claude's `idle_prompt` event.
 
-- Cards sit in a corner of the screen holding the mouse (top-right by default), above other windows, and never take focus, neither when they appear nor when you click one. On macOS they also float above full-screen apps and on every Space, with no Accessibility permission needed. Clawd waves at 8 fps.
+- Cards sit in a corner of the screen holding the mouse (top-right by default), above other windows, and never take focus, neither when they appear nor when you click one. On macOS they also float above full-screen apps and on every Space, with no Accessibility permission needed. Clawd waves at 8 fps by default.
 - Up to 3 cards stack; more wait in a queue. A new alert for a session that already has a card replaces it. With more than one session open, the title carries a 4-character session tag.
 - A card fades in over 150 ms, stays 5 s, fades out over 300 ms. Hovering pauses the timer.
 - **Clicking a card dismisses it and brings forward the terminal or IDE hosting that session.** For sessions with no terminal above them (background sessions), it falls back to the app named in the hook's environment (`__CFBundleIdentifier`, `TERM_PROGRAM`, Ghostty or kitty variables).
@@ -113,7 +113,15 @@ stop = true
 permission_prompt = true
 idle_prompt = true
 subagent_stop = false
+
+[animation]
+enabled = false             # set true to use a custom sprite
+# file = "~/sprites/my-character.png"
+fps = 8                     # custom animation speed; 1-60 fps (e.g. 12.5)
+size = 88                   # custom character size in logical pixels (32-88)
 ```
+
+To use your own character, set `animation.enabled = true` and `file` to a local **RGBA PNG** sprite sheet. Use a single square image for a static sprite or place square animation frames side by side in one horizontal PNG strip (for example, 11 frames of 64x64 pixels make a 704x64 image). The renderer scales each custom frame into a configurable 32-88 logical-pixel slot (`size = 88` by default); bundled Clawd stays 64px. Nearest-neighbor sampling is used at all display scales, with hard transparency edges (alpha below 128 becomes transparent, alpha 128 or above becomes opaque). `fps` controls playback, including while hovering; hover pauses only the dismissal timer. Animated MP4/GIF files must first be converted into a PNG sheet; no video decoder runs in the notification process. Leave the setting disabled to use bundled Clawd. If the file is missing, malformed, or unsupported, the overlay logs the error and shows Clawd instead. Changes take effect for new overlay processes; `clawdtoast reload` can also be used after editing the config.
 
 Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir), `CLAWDTOAST_BACKEND` (Linux: `wayland`, `x11` or `notify`), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_PID` (the agent pid to watch and focus), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). `CODEX_HOME` overrides Codex's configuration directory. Log: `clawdtoast.log` in the state dir.
 
@@ -121,6 +129,7 @@ Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATI
 
 - **No cards after installing or updating:** the binary is still building. Check `target/build.log` in the plugin's folder (`~/.claude/plugins/cache/clawdtoast/clawdtoast/<version>`).
 - **Codex notifications never appear:** run `/hooks` in Codex and ensure ClawdToast's hooks are trusted. Check your `CODEX_HOME` and the `hooks.json` there. If Codex reports `Hook failed` with exit code 1 on Windows, rebuild and rerun `install codex` to replace older quoted commands, then review the updated hooks in `/hooks`.
+- **Codex stays on `Running hook` or alerts disappear intermittently:** rebuild the binary used by `~/.codex/hooks.json`. The Windows hook reader and daemon must both be up to date: older versions could wait for stdin EOF or leave the hook's captured output pipes open. On Windows, run `./tests/windows/codex-hooks.ps1 -Exe target/release/clawdtoast.exe` to exercise hooks with open input pipes and concurrent events.
 - **Click doesn't focus anything:** `clawdtoast.log` says why (`no app found above pid ...`, `card has no pid ...`).
 - **Linux, no card and no notification:** `clawdtoast.log` names the cause: missing X11 libraries, a Wayland compositor without layer-shell and no X server (`DISPLAY` unset) and no `notify-send`/`gdbus` installed (`libnotify-bin` on Debian/Ubuntu), or no display in the hook's environment (`DISPLAY`/`WAYLAND_DISPLAY` unset, as over SSH or in a stale tmux server).
 - **Two daemons running:** a daemon from before 0.1.3 can't be replaced automatically; kill it and the next hook starts the current one.
@@ -129,6 +138,7 @@ Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATI
 
 ```
 cargo test                          # unit tests
+./tests/windows/codex-hooks.ps1     # Windows: Codex hook IPC and open-pipe regression
 tests/integration.sh [binary]       # headless lifecycle, config, install/uninstall tests
 scripts/check_budgets.sh [binary]   # resource budgets (CLAWDTOAST_CI_GUI=1 adds the overlay checks)
 python3 -I tools/gen_assets.py      # regenerate assets/ (sprite sheet + sounds)
@@ -163,7 +173,7 @@ On Linux (measured in a container): binary 1.8 MB, idle daemon 3.9 MB, shim p95 
 - **Font:** loads Arial (macOS, Windows) or DejaVu/Liberation/Noto (Linux) from the system at runtime. DejaVu is wider than Arial, so long titles are cut off sooner on Linux.
 - **Linux coverage:** verified on Xvfb and headless sway (placement, stacking, timeout, config position, fallback, lifecycle). Not tested: a real GNOME, KDE or Hyprland session, multiple monitors, HiDPI, pointer hover and click (the headless setups have no pointer), X11 click-to-focus, fades under a real compositor, and a real notification daemon (a stub `notify-send` stands in).
 - **Do Not Disturb / Focus Assist:** not respected; neither OS exposes a public API for it.
-- **Artwork:** `assets/clawd.png` is a hand-drawn sprite sheet (4 frames side by side, frame size = image height). Replace it and nothing else changes.
+- **Artwork:** The bundled default is `assets/clawd.png` (four 32x32 frames). Custom artwork is opt-in through `[animation]` in the config, loaded from disk without rebuilding. Source video compression artifacts may remain visible in sprite sheets extracted from MP4s; converting to PNG avoids additional losses but cannot reconstruct original pixel colors.
 - **Overlay race:** an alert that arrives in the instant the idle overlay exits is dropped.
 - `vendor/softbuffer` is softbuffer 0.4.8 with a one-line patch so macOS honours alpha (see `vendor/softbuffer/PATCH.md`). `fontdue` is pinned to 0.9.3 because 0.9.5 needs a newer Rust than 1.86.
 
