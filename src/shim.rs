@@ -14,10 +14,14 @@ pub fn run(event: &str) {
 
 fn handle(event: &str) -> Result<(), String> {
     let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).map_err(|e| e.to_string())?;
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| e.to_string())?;
     // Over SSH or on a bare VT there is no screen to draw on: do nothing, start no daemon.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("CLAWDTOAST_HEADLESS").is_none() && !crate::backend::has_display(|k| std::env::var(k).ok()) {
+    if std::env::var_os("CLAWDTOAST_HEADLESS").is_none()
+        && !crate::backend::has_display(|k| std::env::var(k).ok())
+    {
         return Ok(());
     }
     let v: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
@@ -30,7 +34,11 @@ fn handle(event: &str) -> Result<(), String> {
     }
 
     let msg = match event {
-        "session-start" => Msg::SessionOpen { session_id, pid: claude_pid(), cwd },
+        "session-start" => Msg::SessionOpen {
+            session_id,
+            pid: claude_pid(),
+            cwd,
+        },
         "session-end" => Msg::SessionClose { session_id },
         "stop" => {
             let body = text::last_assistant_text(&s("transcript_path"))
@@ -39,7 +47,12 @@ fn handle(event: &str) -> Result<(), String> {
                 .unwrap_or_else(|| "Finished".into());
             alert(session_id, Kind::Done, project, body)
         }
-        "subagent-stop" => alert(session_id, Kind::Subagent, project, "A subagent finished".into()),
+        "subagent-stop" => alert(
+            session_id,
+            Kind::Subagent,
+            project,
+            "A subagent finished".into(),
+        ),
         "notification" => {
             let kind = match v["notification_type"].as_str() {
                 Some("permission_prompt") => Kind::Permission,
@@ -48,7 +61,11 @@ fn handle(event: &str) -> Result<(), String> {
                 None => Kind::Other,
             };
             let body = text::first_sentence(v["message"].as_str().unwrap_or(""));
-            let body = if body.is_empty() { "Claude needs you".into() } else { body };
+            let body = if body.is_empty() {
+                "Claude needs you".into()
+            } else {
+                body
+            };
             alert(session_id, kind, project, body)
         }
         other => return Err(format!("unknown event {other}")),
@@ -63,13 +80,22 @@ fn handle(event: &str) -> Result<(), String> {
 }
 
 fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
-    Msg::Alert { session_id, kind, project, text, ts: protocol::now_ms(), pid: claude_pid(), app: terminal_app() }
+    Msg::Alert {
+        session_id,
+        kind,
+        project,
+        text,
+        ts: protocol::now_ms(),
+        pid: claude_pid(),
+        app: terminal_app(),
+    }
 }
 
 pub fn send(msg: &Msg) -> Result<(), String> {
     let mut s = ipc::connect(&paths::socket()).map_err(|e| e.to_string())?;
     s.set_write_timeout(Some(Duration::from_millis(50))).ok();
-    s.write_all(protocol::encode(msg).as_bytes()).map_err(|e| e.to_string())
+    s.write_all(protocol::encode(msg).as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 pub fn connect_ok() -> bool {
@@ -110,7 +136,9 @@ pub fn ensure_daemon() -> Result<(), String> {
 /// True when the running daemon was built before this binary. A daemon with no stamp file (from
 /// before stamps existed) cannot be asked to exit, so it is left alone.
 fn older_daemon_running() -> bool {
-    let theirs = std::fs::read_to_string(paths::daemon_stamp()).ok().and_then(|s| s.trim().parse::<u64>().ok());
+    let theirs = std::fs::read_to_string(paths::daemon_stamp())
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
     theirs.is_some_and(|t| t < crate::daemon::stamp())
 }
 
@@ -140,7 +168,13 @@ fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
 fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
     use std::os::windows::fs::OpenOptionsExt;
     loop {
-        match std::fs::OpenOptions::new().create(true).write(true).truncate(false).share_mode(0).open(paths::lock()) {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .share_mode(0)
+            .open(paths::lock())
+        {
             Ok(f) => return Ok(f),
             Err(e) if Instant::now() > deadline => return Err(format!("lock timeout: {e}")),
             Err(_) => std::thread::sleep(Duration::from_millis(5)),
@@ -174,7 +208,7 @@ fn spawn_daemon() -> Result<(), String> {
 /// Bundle id of the terminal this hook's environment came from, if it says: macOS sets
 /// `__CFBundleIdentifier` for anything launched from an app; `TERM_PROGRAM` and Ghostty's own
 /// variables cover shells that cleared it. Empty when unknown.
-fn terminal_app() -> String {
+pub(crate) fn terminal_app() -> String {
     if let Ok(id) = std::env::var("__CFBundleIdentifier") {
         return id;
     }
@@ -195,7 +229,10 @@ fn terminal_app() -> String {
 /// PID of the Claude Code process: the nearest ancestor whose command name mentions "claude".
 /// 0 (no liveness check) when none is found; the 24h idle backstop still applies.
 fn claude_pid() -> u32 {
-    if let Some(p) = std::env::var("CLAWDTOAST_PID").ok().and_then(|p| p.parse().ok()) {
+    if let Some(p) = std::env::var("CLAWDTOAST_PID")
+        .ok()
+        .and_then(|p| p.parse().ok())
+    {
         return p;
     }
     proc::find_ancestor(|name| name.to_lowercase().contains("claude")).unwrap_or(0)

@@ -10,8 +10,8 @@ pub const CARD_H: f64 = 96.0;
 
 const SPRITE_PNG: &[u8] = include_bytes!("../assets/clawd.png");
 
-// System fonts for M0 (embedding an open-licensed subset is an M1 item). Helvetica.ttc is
-// skipped: fontdue maps U+00B7 to the wrong glyph in it.
+// macOS and Linux system fonts. Windows fonts are resolved from the Windows directory below.
+// Helvetica.ttc is skipped: fontdue maps U+00B7 to the wrong glyph in it.
 const FONT_CANDIDATES: &[(&str, usize)] = &[
     ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
     ("/Library/Fonts/Arial.ttf", 0),
@@ -72,6 +72,26 @@ fn load_font(candidates: &[(&str, usize)]) -> Option<Font> {
     })
 }
 
+#[cfg(target_os = "windows")]
+fn windows_font(bold: bool) -> Option<Font> {
+    let root = std::env::var_os("WINDIR").or_else(|| std::env::var_os("SystemRoot"))?;
+    let dir = std::path::PathBuf::from(root).join("Fonts");
+    let names: &[&str] = if bold {
+        &["segoeuib.ttf", "arialbd.ttf", "tahomabd.ttf", "verdanab.ttf"]
+    } else {
+        &["segoeui.ttf", "arial.ttf", "tahoma.ttf", "verdana.ttf"]
+    };
+    names.iter().find_map(|name| {
+        let data = std::fs::read(dir.join(name)).ok()?;
+        Font::from_bytes(data, FontSettings::default()).ok()
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_font(_bold: bool) -> Option<Font> {
+    None
+}
+
 fn load_sprite() -> Option<Sprite> {
     let mut reader = png::Decoder::new(SPRITE_PNG).read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];
@@ -95,10 +115,17 @@ impl Assets {
     }
 
     pub fn load() -> Assets {
-        let regular = load_font(FONT_CANDIDATES).or_else(|| fontconfig_font("regular"));
-        let bold = load_font(BOLD_CANDIDATES)
+        let regular = windows_font(false)
+            .or_else(|| load_font(FONT_CANDIDATES))
+            .or_else(|| fontconfig_font("regular"));
+        let bold = windows_font(true)
+            .or_else(|| load_font(BOLD_CANDIDATES))
             .or_else(|| fontconfig_font("bold"))
+            .or_else(|| windows_font(false))
             .or_else(|| load_font(FONT_CANDIDATES));
+        if regular.is_none() && bold.is_none() {
+            crate::log::line("renderer: no system fonts found; notification text cannot render");
+        }
         Assets { sprite: load_sprite(), regular, bold }
     }
 }
@@ -244,7 +271,9 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
         pm.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
     }
 
-    if let (Some(bold), Some(reg)) = (&assets.bold, &assets.regular) {
+    let reg = assets.regular.as_ref().or(assets.bold.as_ref());
+    let bold = assets.bold.as_ref().or(reg);
+    if let (Some(bold), Some(reg)) = (bold, reg) {
         let tx = text_x + dot_r * 2.0 + 7.0 * s;
         let mut title = card.title();
         let tw = max_w - (tx - text_x);
@@ -276,6 +305,35 @@ pub fn flatten(pixels: &mut [u32]) {
 #[cfg(test)]
 mod tests {
     use super::{fade, flatten};
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_fonts_render_notification_body() {
+        use super::{render, Assets, CARD_H, CARD_W};
+        use crate::core::Card;
+        use crate::protocol::Kind;
+
+        let assets = Assets::load();
+        assert!(assets.regular.is_some(), "Windows regular font should load");
+        assert!(assets.bold.is_some(), "Windows bold font should load");
+
+        let mut card = Card {
+            session_id: "test".into(), kind: Kind::Done, project: "project".into(),
+            body: String::new(), badge: None, ts: 0, pid: 0, app: String::new(),
+        };
+        let without_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
+        card.body = "Finished the Codex task".into();
+        let with_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
+
+        // Restrict to the body area so sprite, title, and status dot cannot satisfy the test.
+        let body_changed = (42..89).any(|y| {
+            (96..310).any(|x| {
+                let pos = y * CARD_W as usize + x;
+                without_body[pos] != with_body[pos]
+            })
+        });
+        assert!(body_changed, "Notification body must affect rendered pixels");
+    }
 
     #[test]
     fn fade_scales_every_premultiplied_channel() {
