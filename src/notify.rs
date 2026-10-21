@@ -93,6 +93,7 @@ mod tests {
             ts: 0,
             pid: 0,
             app: String::new(),
+            agent: String::new(),
         }
     }
 

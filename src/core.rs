@@ -27,6 +27,9 @@ pub struct Card {
     /// Bundle id to focus when `pid` leads to no app; empty when unknown.
     #[serde(default)]
     pub app: String,
+    /// Agent that sent the alert ("codex"); empty for Claude Code. Picks the card sprite.
+    #[serde(default)]
+    pub agent: String,
 }
 
 impl Card {
@@ -80,7 +83,7 @@ impl Core {
                 self.note_empty(now);
                 None
             }
-            Msg::Alert { session_id, kind, project, text, ts, pid, app } => {
+            Msg::Alert { session_id, kind, project, text, ts, pid, app, agent } => {
                 let e = &self.config.events;
                 let enabled = match kind {
                     Kind::Done => e.stop,
@@ -100,7 +103,7 @@ impl Core {
                 let pid = s.pid;
                 self.empty_since = None;
                 let badge = (self.sessions.len() > 1).then(|| session_id.chars().take(4).collect());
-                Some(Card { session_id, kind, project, body: text, badge, ts, pid, app })
+                Some(Card { session_id, kind, project, body: text, badge, ts, pid, app, agent })
             }
             Msg::Reload => {
                 self.config = Config::load();
@@ -151,7 +154,7 @@ mod tests {
     use super::*;
 
     fn alert(sid: &str, kind: Kind) -> Msg {
-        Msg::Alert { session_id: sid.into(), kind, project: "p".into(), text: "t".into(), ts: 0, pid: 0, app: String::new() }
+        Msg::Alert { session_id: sid.into(), kind, project: "p".into(), text: "t".into(), ts: 0, pid: 0, app: String::new(), agent: String::new() }
     }
 
     #[test]
