@@ -1,8 +1,8 @@
 # clawdtoast
 
-A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code finishes a turn or needs you. Click the card to jump to the terminal running that session.
+A tiny Clawd waves in the corner of your screen, with a chime, when Claude Code or Codex finishes a turn or needs you. Click the card to jump to the terminal running that session.
 
-It runs only while a Claude Code session is open, uses about 9 MB while idle, and works on macOS, Windows 10+ and Linux (X11 and Wayland).
+It runs while a supported agent session is open, uses about 9 MB while idle, and works on macOS, Windows 10+ and Linux (X11 and Wayland).
 
 ## Install
 
@@ -29,6 +29,26 @@ target/release/clawdtoast uninstall    # removes only clawdtoast's entries
 
 `install` refuses to run while the plugin is installed (the hooks would fire twice) unless you pass `--force`. Try it any time with `clawdtoast test`, which shows one card of each kind.
 
+### With Codex
+
+Build the same binary with `cargo build --release`, then install the Codex hooks:
+
+```sh
+target/release/clawdtoast install codex       # merges into ~/.codex/hooks.json
+target/release/clawdtoast uninstall codex     # removes only ClawdToast's Codex commands
+```
+
+On Windows use `target\release\clawdtoast.exe`, located in a path without spaces or shell
+metacharacters (Codex's Windows hook runner can fail to launch quoted executable paths).
+The installer honors `CODEX_HOME` when set,
+backs up existing `hooks.json` before modifying it, and preserves other hooks. You can install
+both Claude Code and Codex adapters; they share one daemon.
+
+**In Codex, run `/hooks` to review and trust the installed hooks.** Codex skips untrusted
+commands until you approve them. Re-install after moving or rebuilding the binary at a different
+path, then review any updated hook definitions. Some Codex environments may restrict user hooks
+through managed configuration.
+
 ## What it does
 
 | Claude Code event | Card | Sound |
@@ -37,6 +57,11 @@ target/release/clawdtoast uninstall    # removes only clawdtoast's entries
 | `Notification` `permission_prompt` | Needs permission · project, the hook's message | ping |
 | `Notification` `idle_prompt` | Waiting for you · project, the hook's message | ping |
 | `SubagentStop` | off by default | ping |
+
+Codex maps `Stop` (using `last_assistant_message`), `PermissionRequest` (tool name only),
+and `SubagentStop` to the same card types. `SessionStart` and `SessionEnd` track Codex sessions
+without colliding with Claude sessions. The Codex adapter never approves or denies tool calls.
+Codex does not currently provide a direct equivalent of Claude's `idle_prompt` event.
 
 - Cards sit in a corner of the screen holding the mouse (top-right by default), above other windows, and never take focus, neither when they appear nor when you click one. On macOS they also float above full-screen apps and on every Space, with no Accessibility permission needed. Clawd waves at 8 fps.
 - Up to 3 cards stack; more wait in a queue. A new alert for a session that already has a card replaces it. With more than one session open, the title carries a 4-character session tag.
@@ -48,7 +73,7 @@ target/release/clawdtoast uninstall    # removes only clawdtoast's entries
 
 **macOS.** State lives in `~/Library/Application Support/clawdtoast`. The release script builds a universal binary (see [Releasing](#releasing)).
 
-**Windows.** Claude Code runs hooks through Git Bash, so the plugin's launcher script works as is, and `install` writes the exe path with forward slashes for the same reason.
+**Windows.** Claude Code runs hooks through Git Bash, so the plugin's launcher script works as is, and `install` writes the exe path with forward slashes for the same reason. `install codex` writes an unquoted absolute path, which must contain no spaces or shell metacharacters because Codex's Windows hook runner mishandles quoted program tokens.
 
 - State lives in `%LOCALAPPDATA%\clawdtoast`; the daemon listens on a loopback port recorded in `clawdtoast.sock`. The config is still `~\.config\clawdtoast\config.toml`.
 - Cards have hard-edged rounded corners (a window region, not per-pixel alpha). They are topmost and never take focus, but they do not appear over exclusive-fullscreen apps.
@@ -90,11 +115,12 @@ idle_prompt = true
 subagent_stop = false
 ```
 
-Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir), `CLAWDTOAST_BACKEND` (Linux: `wayland`, `x11` or `notify`), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_PID` (the Claude Code pid to watch and focus), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). Log: `clawdtoast.log` in the state dir.
+Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATION_SECS`, `CLAWDTOAST_MUTE`, `CLAWDTOAST_SUBAGENT`, `CLAWDTOAST_DIR` (socket/lock/log dir), `CLAWDTOAST_BACKEND` (Linux: `wayland`, `x11` or `notify`), `CLAWDTOAST_GRACE_SECS` (10), `CLAWDTOAST_LIVENESS_SECS` (30), `CLAWDTOAST_PID` (the agent pid to watch and focus), `CLAWDTOAST_HEADLESS` (log cards instead of drawing them). `CODEX_HOME` overrides Codex's configuration directory. Log: `clawdtoast.log` in the state dir.
 
 ## Troubleshooting
 
 - **No cards after installing or updating:** the binary is still building. Check `target/build.log` in the plugin's folder (`~/.claude/plugins/cache/clawdtoast/clawdtoast/<version>`).
+- **Codex notifications never appear:** run `/hooks` in Codex and ensure ClawdToast's hooks are trusted. Check your `CODEX_HOME` and the `hooks.json` there. If Codex reports `Hook failed` with exit code 1 on Windows, rebuild and rerun `install codex` to replace older quoted commands, then review the updated hooks in `/hooks`.
 - **Click doesn't focus anything:** `clawdtoast.log` says why (`no app found above pid ...`, `card has no pid ...`).
 - **Linux, no card and no notification:** `clawdtoast.log` names the cause: missing X11 libraries, a Wayland compositor without layer-shell and no X server (`DISPLAY` unset) and no `notify-send`/`gdbus` installed (`libnotify-bin` on Debian/Ubuntu), or no display in the hook's environment (`DISPLAY`/`WAYLAND_DISPLAY` unset, as over SSH or in a stale tmux server).
 - **Two daemons running:** a daemon from before 0.1.3 can't be replaced automatically; kill it and the next hook starts the current one.

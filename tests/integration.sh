@@ -44,6 +44,18 @@ for i in 1 2 3 4 5 6; do echo "{\"session_id\":\"s$i\"}" | "$BIN" hook session-e
 sleep 3
 check "daemon exits after last SessionEnd" "[ \$(daemons) -eq 0 ]"
 
+# Codex hooks share the daemon, but have their own session namespace and input format.
+echo '{"session_id":"c1","cwd":"/x/codex"}' | "$BIN" codex-hook session-start
+codex_response=$(echo '{"session_id":"c1","cwd":"/x/codex","last_assistant_message":"Fixed the tests. More details."}' | "$BIN" codex-hook stop)
+echo '{"session_id":"c1","cwd":"/x/codex","tool_name":"Bash"}' | "$BIN" codex-hook permission-request
+sleep 0.3
+check "Codex Stop produces valid neutral JSON" '[ "$codex_response" = "{}" ]'
+check "Codex Stop uses last_assistant_message" "log | grep -q 'card: Done Â· codex | Fixed the tests.'"
+check "Codex approval request uses the tool name" "log | grep -q 'card: Needs permission Â· codex | Codex needs approval for Bash'"
+echo '{"session_id":"c1"}' | "$BIN" codex-hook session-end
+sleep 3
+check "Codex SessionEnd closes its session" "[ \$(daemons) -eq 0 ]"
+
 # Config: events can be switched off, and `reload` applies a changed file to a running daemon.
 export CLAWDTOAST_CONFIG="$CLAWDTOAST_DIR/config.toml"
 printf '[events]\nstop = false\n' > "$CLAWDTOAST_CONFIG"
@@ -73,6 +85,19 @@ check "install writes a backup" "ls $CLAUDE_CONFIG_DIR/settings.json.clawdtoast-
 same_json() { python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])) != json.load(open(sys.argv[2])))' "$1" "$2"; }
 check "uninstall restores the original settings" "same_json $CLAUDE_CONFIG_DIR/settings.json $CLAWDTOAST_DIR/orig.json"
 unset CLAUDE_CONFIG_DIR
+
+# Codex install and uninstall must preserve other commands and metadata.
+export CODEX_HOME="$CLAWDTOAST_DIR/codex"
+mkdir -p "$CODEX_HOME"
+echo '{"description":"keep","hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo original"}]}]}}' > "$CODEX_HOME/hooks.json"
+cp "$CODEX_HOME/hooks.json" "$CLAWDTOAST_DIR/codex-original.json"
+"$BIN" install codex >/dev/null
+check "Codex install preserves existing hooks" "grep -q 'echo original' $CODEX_HOME/hooks.json && grep -q 'codex-hook permission-request' $CODEX_HOME/hooks.json"
+check "Codex installer writes a backup" "ls $CODEX_HOME/hooks.json.clawdtoast-bak-* >/dev/null 2>&1"
+"$BIN" install codex >/dev/null
+"$BIN" uninstall codex >/dev/null
+check "Codex uninstall restores original config" "same_json $CODEX_HOME/hooks.json $CLAWDTOAST_DIR/codex-original.json"
+unset CODEX_HOME
 
 pkill -f "$BIN daemon" 2>/dev/null
 rm -rf "$CLAWDTOAST_DIR"
