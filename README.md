@@ -11,12 +11,26 @@ It runs while a supported agent session is open, uses about 9 MB while idle, and
 Download the archive for Windows x86_64, Linux x86_64 or universal macOS from
 [GitHub Releases](https://github.com/faletto/clawdtoast/releases). Each archive contains
 the executable, this README, the license and `bae.toml`. Extract it before installing
-the hooks using the commands below. On Windows, put `clawdtoast.exe` in a simple path
-such as `D:\Tools\clawdtoast`.
+the hooks. On Windows, put `clawdtoast.exe` in a simple path such as `D:\Tools\clawdtoast`.
+
+From the extracted directory, install the Codex hooks:
+
+```powershell
+# Windows (PowerShell)
+.\clawdtoast.exe install codex
+```
+
+```sh
+# macOS / Linux
+./clawdtoast install codex
+```
+
+Use `install` without `codex` to add Claude Code hooks. Both adapters can be installed
+on the same computer. In Codex, review and trust the installed commands with `/hooks`.
 
 To select Bae, copy the bundled `bae.toml` to `~/.config/clawdtoast/config.toml`
 (`%USERPROFILE%\.config\clawdtoast\config.toml` on Windows), then run `clawdtoast reload`.
-If you already have a config, merge its `[animation]` section to preserve your other settings.
+If you already have a config, merge the preset's `[animation]` values into it to preserve other settings.
 The macOS download has an ad-hoc signature and is not notarized; see [Releasing](#releasing).
 
 ### As a Claude Code plugin (recommended)
