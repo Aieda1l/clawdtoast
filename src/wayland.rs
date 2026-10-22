@@ -258,11 +258,16 @@ impl Wl {
             Offer::Replace(i) => {
                 let c = &mut self.cards[i];
                 c.card = card;
-                if !c.card.silent {
+                let alpha = if c.card.silent {
+                    c.timing
+                        .alpha(Instant::now(), c.card.hold(self.duration))
+                        .unwrap_or(0.0)
+                } else {
                     c.timing.restart();
-                }
+                    0.0
+                };
                 c.frame = 0;
-                paint(&mut self.pool, &self.assets, c, 0.0);
+                paint(&mut self.pool, &self.assets, c, alpha);
             }
             Offer::Queued => {}
             Offer::Dismiss(i) => self.remove(qh, i, "resolved or session closed"),
