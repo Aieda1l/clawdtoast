@@ -44,6 +44,9 @@ pub enum Msg {
     Alert {
         session_id: String,
         kind: Kind,
+        /// Optional stable hook event identity; used to deduplicate Codex input prompts.
+        #[serde(default)]
+        event_id: String,
         #[serde(default)]
         project: String,
         #[serde(default)]
@@ -105,6 +108,7 @@ mod tests {
         let m = Msg::Alert {
             session_id: "abc1".into(),
             kind: Kind::Permission,
+            event_id: String::new(),
             project: "clawdtoast".into(),
             text: "hi".into(),
             ts: 5,
@@ -122,7 +126,7 @@ mod tests {
         assert!(matches!(m, Msg::SessionClose { .. }));
         assert!(matches!(decode(r#"{"v":1,"type":"brand_new"}"#), Some(Msg::Unknown)));
         let m = decode(r#"{"v":1,"type":"alert","session_id":"x","kind":"weird"}"#).unwrap();
-        assert!(matches!(m, Msg::Alert { kind: Kind::Other, .. }));
+        assert!(matches!(m, Msg::Alert { kind: Kind::Other, event_id, .. } if event_id.is_empty()));
     }
 
     #[test]

@@ -48,10 +48,19 @@ check "daemon exits after last SessionEnd" "[ \$(daemons) -eq 0 ]"
 echo '{"session_id":"c1","cwd":"/x/codex"}' | "$BIN" codex-hook session-start
 codex_response=$(echo '{"session_id":"c1","cwd":"/x/codex","last_assistant_message":"Fixed the tests. More details."}' | "$BIN" codex-hook stop)
 echo '{"session_id":"c1","cwd":"/x/codex","tool_name":"Bash"}' | "$BIN" codex-hook permission-request
+question='{"session_id":"c1","cwd":"/x/codex","turn_id":"t1","tool_use_id":"call1","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Which option should I use?"}]}}'
+echo "$question" | "$BIN" codex-hook pre-tool-use
+echo "$question" | "$BIN" codex-hook pre-tool-use
+echo '{"session_id":"c1","tool_name":"Bash"}' | "$BIN" codex-hook pre-tool-use
+echo '{"session_id":"c1","turn_id":"t1","last_assistant_message":"Which option should I use?"}' | "$BIN" codex-hook stop
+question_response=$(echo '{"session_id":"c1","cwd":"/x/codex","turn_id":"t2","last_assistant_message":"Can you clarify the target platform?"}' | "$BIN" codex-hook stop)
 sleep 0.3
 check "Codex Stop produces valid neutral JSON" '[ "$codex_response" = "{}" ]'
+check "Codex question Stop also returns neutral JSON" '[ "$question_response" = "{}" ]'
 check "Codex Stop uses last_assistant_message" "log | grep -q 'card: Done · codex | Fixed the tests.'"
 check "Codex approval request uses the tool name" "log | grep -q 'card: Needs permission · codex | Codex needs approval for Bash'"
+check "Codex typed-input and follow-up questions show Waiting for you" "log | grep -q 'card: Waiting for you · codex | Which option should I use?' && log | grep -q 'card: Waiting for you · codex | Can you clarify the target platform?'"
+check "Codex retries and overlapping question signals do not duplicate cards" "[ \$(log | grep -c 'card: Waiting for you · codex') -eq 2 ]"
 echo '{"session_id":"c1"}' | "$BIN" codex-hook session-end
 sleep 3
 check "Codex SessionEnd closes its session" "[ \$(daemons) -eq 0 ]"

@@ -83,6 +83,7 @@ fn alert(session_id: String, kind: Kind, project: String, text: String) -> Msg {
     Msg::Alert {
         session_id,
         kind,
+        event_id: String::new(),
         project,
         text,
         ts: protocol::now_ms(),

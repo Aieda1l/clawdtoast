@@ -5,7 +5,7 @@ $exePath = (Resolve-Path $Exe).Path
 $state = Join-Path $env:TEMP ('clawdtoast-codex-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $state | Out-Null
 
-function Start-Hook([string]$eventName) {
+function Start-Hook([string]$eventName, [string]$payload = '{"session_id":"open-pipe-test","cwd":"D:/tests","last_assistant_message":"Finished testing"}') {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $exePath
     $start.Arguments = 'codex-hook ' + $eventName
@@ -23,7 +23,7 @@ function Start-Hook([string]$eventName) {
     $err = $proc.StandardError.ReadToEndAsync()
     # Deliberately do not write a newline or close stdin: Codex may leave its
     # JSON pipe open. Captured output must also reach EOF despite the daemon.
-    $proc.StandardInput.Write('{"session_id":"open-pipe-test","cwd":"D:/tests","last_assistant_message":"Finished testing"}')
+    $proc.StandardInput.Write($payload)
     $proc.StandardInput.Flush()
     return @{ Event = $eventName; Process = $proc; Out = $out; Err = $err }
 }
@@ -137,6 +137,20 @@ try {
         throw "expected 11 notifications including file-backed input, got $cards; log:`n$log"
     }
     if ($log -match 'timeout|did not come up|could not show') { throw "hook error: $log" }
+    # A structured question fires early, and a duplicate hook for the same call
+    # must not play another sound or create another card.
+    $inputPrompt = '{"session_id":"question-test","cwd":"D:/tests","turn_id":"turn-1","tool_use_id":"call-1","tool_name":"request_user_input","tool_input":{"questions":[{"question":"Which approach should I use?"}]}}'
+    Check-Hook (Start-Hook 'pre-tool-use' $inputPrompt)
+    Check-Hook (Start-Hook 'pre-tool-use' $inputPrompt)
+    Check-Hook (Start-Hook 'pre-tool-use' '{"session_id":"question-test","tool_name":"Bash"}')
+    Check-Hook (Start-Hook 'stop' '{"session_id":"question-test","turn_id":"turn-1","last_assistant_message":"Which approach should I use?"}')
+    Check-Hook (Start-Hook 'stop' '{"session_id":"question-test","turn_id":"turn-2","last_assistant_message":"Can you clarify the requirement?"}')
+    Start-Sleep -Milliseconds 250
+    $log = Get-Content (Join-Path $state 'clawdtoast.log') -Raw
+    $waiting = @($log -split "`n" | Where-Object { $_ -match 'card: Waiting for you' }).Count
+    if ($waiting -ne 2 -or $log -notmatch 'Which approach should I use\?' -or $log -notmatch 'Can you clarify the requirement\?') {
+        throw "expected two distinct waiting notifications, got $waiting; log:`n$log"
+    }
     Write-Host 'Codex PowerShell, open-pipe, file-input and concurrent hook smoke test passed (11/11 concurrent cards).'
 } finally {
     Stop-TestDaemon $state
