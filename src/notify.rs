@@ -18,32 +18,34 @@ pub fn run() {
     let timeout_ms = (cfg.duration_secs * 1000.0).round() as u32;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || crate::overlay::read_cards(|card| tx.send(card).is_ok()));
-    let mut ids: HashMap<String, (u32, u64)> = HashMap::new();
+    let mut ids: HashMap<String, (u32, u64, bool)> = HashMap::new();
     let mut last = Instant::now();
     loop {
         let wall = protocol::now_ms();
-        for (id, expiry) in ids.values() {
+        for (id, expiry, _) in ids.values() {
             if *expiry <= wall {
                 close(*id);
             }
         }
-        ids.retain(|_, (_, expiry)| *expiry > wall);
+        ids.retain(|_, (_, expiry, _)| *expiry > wall);
+        let persistent = ids.values().any(|(_, _, persistent)| *persistent);
         let wait = notification_wait(
             ids.values()
-                .map(|(_, expiry)| Duration::from_millis(expiry.saturating_sub(wall)))
+                .map(|(_, expiry, _)| Duration::from_millis(expiry.saturating_sub(wall)))
                 .min(),
             last.elapsed(),
+            persistent,
         );
         let card = match rx.recv_timeout(wait) {
             Ok(card) => card,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                for (id, _) in ids.values() {
+                for (id, _, _) in ids.values() {
                     close(*id);
                 }
                 return;
             }
             Err(_) => {
-                if ids.is_empty() && last.elapsed() >= crate::anim::IDLE_EXIT {
+                if !persistent && last.elapsed() >= crate::anim::IDLE_EXIT {
                     return;
                 }
                 continue;
@@ -51,7 +53,7 @@ pub fn run() {
         };
         last = Instant::now();
         let key = card.slot();
-        let previous = ids.get(&key).map_or(0, |(id, _)| *id);
+        let previous = ids.get(&key).map_or(0, |(id, _, _)| *id);
         if card.dismiss {
             if previous != 0 {
                 close(previous);
@@ -76,17 +78,26 @@ pub fn run() {
             } else {
                 protocol::now_ms() + u64::from(timeout)
             };
-            ids.insert(key, (id, expiry));
+            ids.insert(key, (id, expiry, card.expires_at > 0));
         } else {
             log::line("notify: neither notify-send nor gdbus could deliver the notification");
         }
     }
 }
 
-/// Active notifications remain addressable for replacement or dismissal until their deadline.
-/// Only an empty notification set uses the idle shutdown timer.
-fn notification_wait(next_expiry: Option<Duration>, idle_elapsed: Duration) -> Duration {
-    next_expiry.unwrap_or_else(|| crate::anim::IDLE_EXIT.saturating_sub(idle_elapsed))
+/// Persistent notifications stay addressable until their deadline; ordinary
+/// notifications let the overlay retire after its existing idle grace period.
+fn notification_wait(
+    next_expiry: Option<Duration>,
+    idle_elapsed: Duration,
+    persistent: bool,
+) -> Duration {
+    let until_expiry = next_expiry.unwrap_or(crate::anim::IDLE_EXIT);
+    if persistent {
+        until_expiry
+    } else {
+        until_expiry.min(crate::anim::IDLE_EXIT.saturating_sub(idle_elapsed))
+    }
 }
 
 fn deliver(card: &Card, timeout_ms: u32, previous: u32) -> Option<u32> {
@@ -237,14 +248,18 @@ mod tests {
     }
 
     #[test]
-    fn active_notification_wait_is_not_cut_short_by_idle_exit() {
+    fn persistent_notification_wait_is_not_cut_short_by_idle_exit() {
         let elapsed = crate::anim::IDLE_EXIT;
         let still_visible = Duration::from_secs(2);
         assert_eq!(
-            notification_wait(Some(still_visible), elapsed),
+            notification_wait(Some(still_visible), elapsed, true),
             still_visible
         );
-        assert_eq!(notification_wait(None, elapsed), Duration::ZERO);
+        assert_eq!(
+            notification_wait(Some(still_visible), elapsed, false),
+            Duration::ZERO
+        );
+        assert_eq!(notification_wait(None, elapsed, false), Duration::ZERO);
     }
 
     #[test]
