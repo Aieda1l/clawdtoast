@@ -26,6 +26,14 @@ pub fn first_sentence(s: &str) -> String {
     out.replace('`', "").replace("**", "")
 }
 
+/// A prompt to show on a card. Keep its punctuation, including colons and
+/// periods inside filenames/versions, rather than treating it as a summary.
+pub fn question_text(s: &str) -> String {
+    let s = s.trim().trim_start_matches(|c: char| matches!(c, '#' | '*' | '-' | '>' | '`' | ' '));
+    s.lines().next().unwrap_or("").trim().chars().take(MAX_CHARS).collect::<String>()
+        .replace('`', "").replace("**", "")
+}
+
 /// Text of the last assistant message in a Claude Code transcript (JSONL), read from the end.
 pub fn last_assistant_text(path: &str) -> Option<String> {
     let mut f = File::open(path).ok()?;
@@ -81,6 +89,14 @@ mod tests {
         assert_eq!(first_sentence("v1.2 shipped"), "v1.2 shipped");
         assert_eq!(first_sentence("  "), "");
         assert_eq!(first_sentence(&"a".repeat(500)).chars().count(), 200);
+    }
+
+    #[test]
+    fn questions_keep_internal_punctuation() {
+        assert_eq!(question_text("Which environment: staging or production?"), "Which environment: staging or production?");
+        assert_eq!(question_text("Can I use Node.js and config.toml with v1.2?"), "Can I use Node.js and config.toml with v1.2?");
+        assert_eq!(question_text("**Which option?**"), "Which option?");
+        assert_eq!(question_text(&"a".repeat(500)).chars().count(), 200);
     }
 
     #[test]

@@ -194,7 +194,7 @@ fn translate(event: &str, v: &Value, pid: u32, app: String) -> Result<Option<Msg
                 .as_array()
                 .and_then(|questions| questions.first())
                 .and_then(|q| q["question"].as_str())
-                .map(text::first_sentence)
+                .map(text::question_text)
                 .filter(|q| !q.is_empty()) else {
                     return Ok(None);
                 };
@@ -220,7 +220,16 @@ fn final_question(message: &str) -> Option<String> {
     let end = message.trim().trim_end_matches(['*', '`', '_', '"', '\'', ')', ' ', '\n']);
     if !end.ends_with('?') { return None; }
     let last_line = end.rsplit('\n').next()?.trim();
-    let start = last_line[..last_line.len() - 1].rfind(['.', '!', '?']).map_or(0, |i| i + 1);
+    // A sentence boundary needs whitespace after the punctuation. Periods
+    // inside Node.js, config.toml, or v1.2 are part of the question itself.
+    let mut start = 0;
+    for (i, ch) in last_line[..last_line.len() - 1].char_indices() {
+        if matches!(ch, '.' | '!' | '?')
+            && last_line[i + ch.len_utf8()..].chars().next().is_some_and(char::is_whitespace)
+        {
+            start = i + ch.len_utf8();
+        }
+    }
     let question = last_line[start..].trim().trim_start_matches(['-', '*', '>', '#', ' ']);
     let lower = question.to_ascii_lowercase();
     let first = lower.split_whitespace().next()?;
@@ -235,7 +244,7 @@ fn final_question(message: &str) -> Option<String> {
         || (first == "what" && lower.split_whitespace().count() <= 5
             && !matches!(lower.split_whitespace().nth(1), Some("is" | "are" | "was" | "were" | "do" | "does" | "did" | "if")));
     if interrogative && directed {
-        Some(text::first_sentence(question))
+        Some(text::question_text(question))
     } else {
         None
     }
@@ -445,6 +454,11 @@ mod tests {
         assert!(matches!(translate("pre-tool-use", &payload, 15, String::new()).unwrap(),
             Some(Msg::Alert { kind: Kind::Idle, text, event_id, agent, .. })
             if text == "Which database should I use?" && event_id == "input:turn1:call1" && agent == "codex"));
+        let mut with_colon = payload.clone();
+        with_colon["tool_input"]["questions"][0]["question"] = json!("Which environment: staging or production?");
+        assert!(matches!(translate("pre-tool-use", &with_colon, 15, String::new()).unwrap(),
+            Some(Msg::Alert { kind: Kind::Idle, text, .. })
+            if text == "Which environment: staging or production?"));
         for tool in ["Bash", "apply_patch", "update_plan", "mcp__server__tool"] {
             let mut other = payload.clone();
             other["tool_name"] = json!(tool);
@@ -470,6 +484,11 @@ mod tests {
             ("**Would you like me to continue?**", "Would you like me to continue?"),
             ("Which database?", "Which database?"),
             ("What file format?", "What file format?"),
+            ("Can I use Node.js?", "Can I use Node.js?"),
+            ("Can we ship v1.2?", "Can we ship v1.2?"),
+            ("Should I edit config.toml?", "Should I edit config.toml?"),
+            ("I checked README.md. Can I use Node.js?", "Can I use Node.js?"),
+            ("Which environment: staging or production?", "Which environment: staging or production?"),
         ] {
             let v = json!({ "session_id": "s", "turn_id": "t", "last_assistant_message": message });
             assert!(matches!(translate("stop", &v, 0, String::new()).unwrap(),
