@@ -48,6 +48,8 @@ jobs:
         run: tests/linux/wayland.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
       - name: Notification fallback and no-display behaviour
         run: tests/linux/fallback.sh "$PWD/target/release/clawdtoast"
+      - name: Persistent question attention lifecycle
+        run: bash tests/linux/attention.sh "$PWD/target/release/clawdtoast" "$RUNNER_TEMP/shots"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

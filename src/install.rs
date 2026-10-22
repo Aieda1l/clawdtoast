@@ -10,7 +10,11 @@ const HOOKS: [(&str, &str, Option<&str>); 5] = [
     ("SessionEnd", "session-end", None),
     ("Stop", "stop", None),
     ("SubagentStop", "subagent-stop", None),
-    ("Notification", "notification", Some("permission_prompt|idle_prompt")),
+    (
+        "Notification",
+        "notification",
+        Some("permission_prompt|idle_prompt"),
+    ),
 ];
 
 fn is_ours(cmd: &str) -> bool {
@@ -27,14 +31,18 @@ fn group_hooks(group: &mut Value) -> Option<&mut Vec<Value>> {
 
 /// Adds (or re-points) clawdtoast's hooks. Returns how many events changed.
 pub fn merge(settings: &mut Value, exe: &str) -> Result<usize, String> {
-    let root = settings.as_object_mut().ok_or("settings.json is not a JSON object")?;
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json is not a JSON object")?;
     let hooks = root.entry("hooks").or_insert_with(|| json!({}));
     let hooks = hooks.as_object_mut().ok_or("\"hooks\" is not an object")?;
     let mut changed = 0;
     for (event, arg, matcher) in HOOKS {
         let cmd = command_for(exe, arg);
         let arr = hooks.entry(event).or_insert_with(|| json!([]));
-        let arr = arr.as_array_mut().ok_or_else(|| format!("hooks.{event} is not an array"))?;
+        let arr = arr
+            .as_array_mut()
+            .ok_or_else(|| format!("hooks.{event} is not an array"))?;
         let mut found = false;
         for group in arr.iter_mut() {
             for h in group_hooks(group).into_iter().flatten() {
@@ -62,7 +70,9 @@ pub fn merge(settings: &mut Value, exe: &str) -> Result<usize, String> {
 /// Removes only clawdtoast's hook entries, pruning groups and events left empty. Returns the count removed.
 pub fn strip(settings: &mut Value) -> usize {
     let mut removed = 0;
-    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else { return 0 };
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return 0;
+    };
     for arr in hooks.values_mut().filter_map(Value::as_array_mut) {
         for group in arr.iter_mut() {
             if let Some(hs) = group_hooks(group) {
@@ -90,19 +100,25 @@ fn claude_dir() -> PathBuf {
 }
 
 fn plugin_installed(dir: &std::path::Path) -> bool {
-    std::fs::read_to_string(dir.join("plugins/installed_plugins.json")).is_ok_and(|s| s.contains("clawdtoast@"))
+    std::fs::read_to_string(dir.join("plugins/installed_plugins.json"))
+        .is_ok_and(|s| s.contains("clawdtoast@"))
 }
 
 pub fn run(install: bool, force: bool) -> Result<(), String> {
     let dir = claude_dir();
     let path = dir.join("settings.json");
     if install && !force && plugin_installed(&dir) {
-        return Err("the clawdtoast plugin is installed; its hooks would fire twice. \
+        return Err(
+            "the clawdtoast plugin is installed; its hooks would fire twice. \
             Uninstall the plugin, or pass --force."
-            .into());
+                .into(),
+        );
     }
     let (mut settings, existed) = match std::fs::read_to_string(&path) {
-        Ok(src) => (serde_json::from_str::<Value>(&src).map_err(|e| format!("{}: {e}", path.display()))?, true),
+        Ok(src) => (
+            serde_json::from_str::<Value>(&src).map_err(|e| format!("{}: {e}", path.display()))?,
+            true,
+        ),
         Err(_) => (json!({}), false),
     };
     let n = if install {
@@ -118,15 +134,26 @@ pub fn run(install: bool, force: bool) -> Result<(), String> {
         return Ok(());
     }
     if existed {
-        let backup = path.with_extension(format!("json.clawdtoast-bak-{}", crate::protocol::now_ms() / 1000));
+        let backup = path.with_extension(format!(
+            "json.clawdtoast-bak-{}",
+            crate::protocol::now_ms() / 1000
+        ));
         std::fs::copy(&path, &backup).map_err(|e| e.to_string())?;
         println!("backup: {}", backup.display());
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.clawdtoast-tmp");
     let out = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&tmp, out).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())?;
-    println!("{}: {} hook entr{} {}", path.display(), n, if n == 1 { "y" } else { "ies" }, if install { "added/updated" } else { "removed" });
+    std::fs::write(&tmp, out)
+        .and_then(|_| std::fs::rename(&tmp, &path))
+        .map_err(|e| e.to_string())?;
+    println!(
+        "{}: {} hook entr{} {}",
+        path.display(),
+        n,
+        if n == 1 { "y" } else { "ies" },
+        if install { "added/updated" } else { "removed" }
+    );
     Ok(())
 }
 
@@ -153,7 +180,10 @@ mod tests {
         assert_eq!(s["model"], "opus");
         assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "say done");
-        assert_eq!(s["hooks"]["Notification"][0]["matcher"], "permission_prompt|idle_prompt");
+        assert_eq!(
+            s["hooks"]["Notification"][0]["matcher"],
+            "permission_prompt|idle_prompt"
+        );
         assert_eq!(merge(&mut s, EXE).unwrap(), 0, "second run changes nothing");
     }
 
@@ -163,7 +193,10 @@ mod tests {
         merge(&mut s, EXE).unwrap();
         assert_eq!(merge(&mut s, "/new/clawdtoast").unwrap(), 5);
         assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 1);
-        assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "\"/new/clawdtoast\" hook stop");
+        assert_eq!(
+            s["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "\"/new/clawdtoast\" hook stop"
+        );
     }
 
     #[test]

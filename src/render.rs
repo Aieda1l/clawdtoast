@@ -142,7 +142,7 @@ fn decode_sprite(bytes: &[u8]) -> Result<Sprite, String> {
         rgba: buf[..info.buffer_size()].to_vec(),
     };
     // Convert partially transparent source pixels to hard pixel-art edges.
-    for px in sprite.rgba.chunks_exact_mut(4) {
+    for px in sprite.rgba.chunks_mut(4) {
         px[3] = if px[3] < 128 { 0 } else { 255 };
     }
     Ok(sprite)
@@ -450,7 +450,13 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
     let bold = assets.bold.as_ref().or(reg);
     if let (Some(bold), Some(reg)) = (bold, reg) {
         let tx = text_x + dot_r * 2.0 + 7.0 * s;
-        let mut title = card.title();
+        // Put the observed count before the project so narrow cards cannot clip
+        // it away. The body explicitly labels its uncertainty.
+        let mut title = if card.pending_count > 0 {
+            format!("{} ({})", card.kind.status(), card.pending_count)
+        } else {
+            card.title()
+        };
         let tw = max_w - (tx - text_x);
         while text_width(bold, &title, 14.0 * s) > tw && title.pop().is_some() {}
         draw_text(
@@ -462,14 +468,19 @@ pub fn render(card: &Card, assets: &Assets, frame: usize, w: u32, h: u32, scale:
             title_base,
             (0xF5, 0xF1, 0xEC),
         );
-        for (i, line) in wrap(reg, &card.body, 12.5 * s, max_w, 2).iter().enumerate() {
+        let body = if card.pending_count > 0 {
+            format!("Unconfirmed · {}: {}", card.project, card.body)
+        } else {
+            card.body.clone()
+        };
+        for (i, line) in wrap(reg, &body, 12.5 * s, max_w, 2).iter().enumerate() {
             let y = (54.0 + 17.0 * i as f32) * s;
             draw_text(&mut pm, reg, line, 12.5 * s, text_x, y, (0xC9, 0xC3, 0xBC));
         }
     }
 
     pm.data()
-        .chunks_exact(4)
+        .chunks(4)
         .map(|p| (p[3] as u32) << 24 | (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32)
         .collect()
 }
@@ -482,6 +493,16 @@ pub fn flatten(pixels: &mut [u32]) {
         let inv = 255 - (*p >> 24);
         let ch = |shift: u32, bg: u32| (((*p >> shift) & 0xFF) + bg * inv / 255).min(255);
         *p = 0xFF00_0000 | ch(16, BG[0]) << 16 | ch(8, BG[1]) << 8 | ch(0, BG[2]);
+    }
+}
+
+/// Scales premultiplied 0xAARRGGBB pixels by `alpha` (0..=1), for compositors with no window opacity.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn fade(pixels: &mut [u32], alpha: f64) {
+    let a = (alpha.clamp(0.0, 1.0) * 256.0) as u32;
+    for p in pixels {
+        let ch = |shift: u32| ((((*p >> shift) & 0xFF) * a) >> 8).min(255);
+        *p = ch(24) << 24 | ch(16) << 16 | ch(8) << 8 | ch(0);
     }
 }
 
@@ -503,10 +524,7 @@ mod tests {
         assert_eq!(sprite.h, 32);
         assert_eq!(sprite.rgba[3], 0, "background must be transparent");
         assert!(
-            sprite
-                .rgba
-                .chunks_exact(4)
-                .all(|px| matches!(px[3], 0 | 255)),
+            sprite.rgba.chunks(4).all(|px| matches!(px[3], 0 | 255)),
             "pixel-art alpha must be binary, with no antialiased edges"
         );
 
@@ -520,6 +538,10 @@ mod tests {
             pid: 0,
             app: String::new(),
             agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
         };
         let frame_0 = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
         let frame_1 = render(&card, &assets, 1, CARD_W as u32, CARD_H as u32, 1.0);
@@ -610,6 +632,10 @@ mod tests {
             pid: 0,
             app: String::new(),
             agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
         };
         // A large custom sprite retains its original opaque pixel colors even
         // at fractional DPI, with no interpolated or semitransparent edges.
@@ -683,6 +709,10 @@ mod tests {
             pid: 0,
             app: String::new(),
             agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
         };
         let without_body = render(&card, &assets, 0, CARD_W as u32, CARD_H as u32, 1.0);
         card.body = "Finished the Codex task".into();
@@ -721,6 +751,10 @@ mod tests {
             pid: 0,
             app: String::new(),
             agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
         };
         let draw = |c: &Card, f| render(c, &assets, f, CARD_W as u32, CARD_H as u32, 1.0);
         let claude = draw(&card, 0);
@@ -755,6 +789,10 @@ mod tests {
             pid: 0,
             app: String::new(),
             agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
         };
         let defaults = Assets::load_with_animation(&Animation::default());
         let bae_config = Animation {
@@ -782,7 +820,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .rgba
-            .chunks_exact(4)
+            .chunks(4)
             .all(|px| px[3] == 0 || px[3] == 255));
         let draw = |assets: &Assets, card: &Card, frame| {
             render(card, assets, frame, CARD_W as u32, CARD_H as u32, 1.0)
@@ -812,6 +850,10 @@ mod tests {
                 &defaults,
                 &Card {
                     agent: "codex".into(),
+                    pending_count: 0,
+                    expires_at: 0,
+                    silent: false,
+                    dismiss: false,
                     ..card.clone()
                 },
                 0
@@ -842,15 +884,5 @@ mod tests {
         let mut px = [0x0000_0000, 0xFFAA_BBCC];
         flatten(&mut px);
         assert_eq!(px, [0xFF26_2422, 0xFFAA_BBCC]);
-    }
-}
-
-/// Scales premultiplied 0xAARRGGBB pixels by `alpha` (0..=1), for compositors with no window opacity.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn fade(pixels: &mut [u32], alpha: f64) {
-    let a = (alpha.clamp(0.0, 1.0) * 256.0) as u32;
-    for p in pixels {
-        let ch = |shift: u32| (((*p >> shift) & 0xFF) * a >> 8).min(255);
-        *p = ch(24) << 24 | ch(16) << 16 | ch(8) << 8 | ch(0);
     }
 }

@@ -303,17 +303,26 @@ impl ApplicationHandler<Ev> for App {
         let card = match ev {
             Ev::Eof => {
                 self.eof = true;
+                // The owning daemon exited or was replaced. Do not leave its
+                // attention windows alive alongside a new daemon's overlay.
+                self.shown.clear();
+                el.exit();
                 return;
             }
             Ev::Card(c) => c,
         };
         self.idle_since = None;
+        if card.expired(protocol::now_ms()) && !card.dismiss {
+            return;
+        }
         match self.stack.offer(&card) {
             Offer::Show => self.open(el, card),
             Offer::Replace(i) => {
                 let s = &mut self.shown[i];
                 s.card = card;
-                s.timing.restart();
+                if !s.card.silent {
+                    s.timing.restart();
+                }
                 s.frame = 0;
                 draw(
                     self.assets.get_or_insert_with(render::Assets::load),
@@ -322,6 +331,8 @@ impl ApplicationHandler<Ev> for App {
                 );
             }
             Offer::Queued => {}
+            Offer::Dismiss(i) => self.remove(el, i, "resolved or session closed"),
+            Offer::Ignore => {}
         }
     }
 
@@ -352,7 +363,13 @@ impl ApplicationHandler<Ev> for App {
         let hold = self.duration;
 
         let expired: Vec<usize> = (0..self.shown.len())
-            .filter(|&i| self.shown[i].timing.alpha(now, hold).is_none())
+            .filter(|&i| {
+                self.shown[i].card.expired(protocol::now_ms())
+                    || self.shown[i]
+                        .timing
+                        .alpha(now, self.shown[i].card.hold(hold))
+                        .is_none()
+            })
             .collect();
         for i in expired.into_iter().rev() {
             self.remove(el, i, "timeout");
@@ -361,6 +378,7 @@ impl ApplicationHandler<Ev> for App {
         let mut next = now + Duration::from_secs(3600);
         let assets = self.assets.get_or_insert_with(render::Assets::load);
         for s in self.shown.iter_mut() {
+            let hold = s.card.hold(hold);
             let Some(a) = s.timing.alpha(now, hold) else {
                 continue;
             };

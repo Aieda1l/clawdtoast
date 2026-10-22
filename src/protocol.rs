@@ -11,6 +11,7 @@ pub enum Kind {
     Permission,
     Idle,
     Subagent,
+    Interrupted,
     #[serde(other)]
     Other,
 }
@@ -22,9 +23,18 @@ impl Kind {
             Kind::Permission => "Needs permission",
             Kind::Idle => "Waiting for you",
             Kind::Subagent => "Subagent done",
+            Kind::Interrupted => "Interrupted",
             Kind::Other => "Claude needs you",
         }
     }
+}
+
+/// Hook-facing identity within a tool call. Options are validated by the adapter,
+/// but never transmitted or displayed in desktop notifications.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Question {
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -40,6 +50,29 @@ pub enum Msg {
     },
     SessionClose {
         session_id: String,
+    },
+    Questions {
+        session_id: String,
+        turn_id: String,
+        call_id: String,
+        questions: Vec<Question>,
+        asynchronous: bool,
+        project: String,
+        pid: u32,
+        app: String,
+        ts: u64,
+    },
+    /// Only a successful blocking question response provides confirmed answers.
+    QuestionsResolved {
+        session_id: String,
+        turn_id: String,
+        call_id: String,
+        question_ids: Vec<String>,
+    },
+    /// Activity is not evidence that any question was answered.
+    SessionActivity {
+        session_id: String,
+        pid: u32,
     },
     Alert {
         session_id: String,
@@ -82,7 +115,10 @@ pub struct Envelope {
 }
 
 pub fn encode(msg: &Msg) -> String {
-    let env = Envelope { v: VERSION, msg: msg.clone() };
+    let env = Envelope {
+        v: VERSION,
+        msg: msg.clone(),
+    };
     let mut line = serde_json::to_string(&env).unwrap_or_default();
     line.push('\n');
     line
@@ -117,14 +153,23 @@ mod tests {
             agent: String::new(),
         };
         let back = decode(&encode(&m)).unwrap();
-        assert!(matches!(back, Msg::Alert { kind: Kind::Permission, .. }));
+        assert!(matches!(
+            back,
+            Msg::Alert {
+                kind: Kind::Permission,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn ignores_unknown_fields_and_types() {
         let m = decode(r#"{"v":9,"type":"session_close","session_id":"x","future":true}"#).unwrap();
         assert!(matches!(m, Msg::SessionClose { .. }));
-        assert!(matches!(decode(r#"{"v":1,"type":"brand_new"}"#), Some(Msg::Unknown)));
+        assert!(matches!(
+            decode(r#"{"v":1,"type":"brand_new"}"#),
+            Some(Msg::Unknown)
+        ));
         let m = decode(r#"{"v":1,"type":"alert","session_id":"x","kind":"weird"}"#).unwrap();
         assert!(matches!(m, Msg::Alert { kind: Kind::Other, event_id, .. } if event_id.is_empty()));
     }

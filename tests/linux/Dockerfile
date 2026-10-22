@@ -4,13 +4,13 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config curl ca-certificates git libasound2-dev \
-      fonts-dejavu-core procps \
+      fonts-dejavu-core procps python3 \
       xvfb x11-utils x11-apps xdotool openbox imagemagick \
       sway grim libnotify-bin dbus dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends xcompmgr \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy
 ENV PATH=/root/.cargo/bin:$PATH
 # Runtime libraries winit's X11 backend dlopens.
 RUN apt-get update && apt-get install -y --no-install-recommends \

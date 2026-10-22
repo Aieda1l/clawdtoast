@@ -59,8 +59,16 @@ check "Codex Stop produces valid neutral JSON" '[ "$codex_response" = "{}" ]'
 check "Codex question Stop also returns neutral JSON" '[ "$question_response" = "{}" ]'
 check "Codex Stop uses last_assistant_message" "log | grep -q 'card: Done · codex | Fixed the tests.'"
 check "Codex approval request uses the tool name" "log | grep -q 'card: Needs permission · codex | Codex needs approval for Bash'"
-check "Codex typed-input and follow-up questions show Waiting for you" "log | grep -q 'card: Waiting for you · codex | Which option should I use?' && log | grep -q 'card: Waiting for you · codex | Can you clarify the target platform?'"
+check "Codex typed-input and follow-up questions show Waiting for you" "log | grep -q 'card: Waiting for you · codex (1 unconfirmed) | Which option should I use?' && log | grep -q 'card: Waiting for you · codex.* | Can you clarify the target platform?'"
 check "Codex retries and overlapping question signals do not duplicate cards" "[ \$(log | grep -c 'card: Waiting for you · codex') -eq 2 ]"
+async_question='{"session_id":"c1","cwd":"/x/codex","turn_id":"t3","tool_use_id":"async1","tool_name":"functions.request_user_input_async","tool_input":{"questions":[{"title":"Which café?","options":["One","Two"]},{"title":"When do we ship?"}]},"tool_response":"{\"accepted\":true}"}'
+echo "$async_question" | "$BIN" codex-hook post-tool-use
+echo "$async_question" | "$BIN" codex-hook post-tool-use
+echo '{"session_id":"c1"}' | "$BIN" codex-hook user-prompt-submit
+echo '{"session_id":"c1","turn_id":"t3","last_assistant_message":"Which café?"}' | "$BIN" codex-hook stop >/dev/null
+sleep .1
+check "Accepted async questions alert once while Codex continues" "[ \$(log | grep -c 'card: Waiting for you.*3 unconfirmed') -eq 1 ]"
+check "Restart ledger excludes question text" "! grep -q 'café' $CLAWDTOAST_DIR/codex-questions.json"
 echo '{"session_id":"c1"}' | "$BIN" codex-hook session-end
 sleep 3
 check "Codex SessionEnd closes its session" "[ \$(daemons) -eq 0 ]"

@@ -5,8 +5,8 @@
 #[cfg(unix)]
 mod imp {
     use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
     pub use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
+    use std::path::Path;
 
     pub fn bind(path: &Path) -> std::io::Result<Listener> {
         let l = Listener::bind(path)?;
@@ -26,8 +26,8 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-    use std::path::Path;
     pub use std::net::{TcpListener as Listener, TcpStream as Stream};
+    use std::path::Path;
 
     pub fn bind(path: &Path) -> std::io::Result<Listener> {
         let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
@@ -40,7 +40,10 @@ mod imp {
             .trim()
             .parse()
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad port file"))?;
-        TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), std::time::Duration::from_millis(200))
+        TcpStream::connect_timeout(
+            &SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            std::time::Duration::from_millis(200),
+        )
     }
 
     /// The support dir lives under the user's profile, which is already private to them.

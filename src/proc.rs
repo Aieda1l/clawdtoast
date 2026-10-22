@@ -7,7 +7,10 @@ pub type Table = HashMap<u32, (u32, String)>;
 
 #[cfg(unix)]
 pub fn table() -> Table {
-    let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid=,comm="]).output() else {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+    else {
         return Table::new();
     };
     String::from_utf8_lossy(&out.stdout)
@@ -25,7 +28,8 @@ pub fn table() -> Table {
 pub fn table() -> Table {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
     };
     let mut t = Table::new();
     unsafe {
@@ -37,8 +41,18 @@ pub fn table() -> Table {
         e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut ok = Process32FirstW(snap, &mut e);
         while ok != 0 {
-            let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
-            t.insert(e.th32ProcessID, (e.th32ParentProcessID, String::from_utf16_lossy(&e.szExeFile[..len])));
+            let len = e
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(e.szExeFile.len());
+            t.insert(
+                e.th32ProcessID,
+                (
+                    e.th32ParentProcessID,
+                    String::from_utf16_lossy(&e.szExeFile[..len]),
+                ),
+            );
             ok = Process32NextW(snap, &mut e);
         }
         CloseHandle(snap);
@@ -73,7 +87,9 @@ pub fn alive(pid: u32) -> bool {
 #[cfg(windows)]
 pub fn alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
     unsafe {
         let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
         if h.is_null() {

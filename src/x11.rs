@@ -14,7 +14,8 @@ use winit::window::Window;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask, PropMode, StackMode,
+    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask, PropMode,
+    StackMode,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -64,7 +65,11 @@ thread_local! {
 }
 
 fn atom(conn: &RustConnection, name: &str) -> Option<u32> {
-    conn.intern_atom(false, name.as_bytes()).ok()?.reply().ok().map(|r| r.atom)
+    conn.intern_atom(false, name.as_bytes())
+        .ok()?
+        .reply()
+        .ok()
+        .map(|r| r.atom)
 }
 
 fn connect() -> Option<X> {
@@ -121,19 +126,34 @@ pub fn configure(w: &Window, width: f64, height: f64, slot: usize, pos: Position
 }
 
 fn raise(w: &Window) {
-    let (Some(x), Some(id)) = (x(), window_id(w)) else { return };
-    let _ = x.conn.configure_window(id, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
+    let (Some(x), Some(id)) = (x(), window_id(w)) else {
+        return;
+    };
+    let _ = x
+        .conn
+        .configure_window(id, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
     let _ = x.conn.flush();
 }
 
 /// Monitors, primary first; the whole screen if RandR has nothing to say.
 fn monitors(x: &X) -> Vec<Rect> {
     let from_randr = || {
-        let mut ms = x.conn.randr_get_monitors(x.root, true).ok()?.reply().ok()?.monitors;
+        let mut ms = x
+            .conn
+            .randr_get_monitors(x.root, true)
+            .ok()?
+            .reply()
+            .ok()?
+            .monitors;
         ms.sort_by_key(|m| !m.primary);
         Some(
             ms.iter()
-                .map(|m| Rect { x: m.x as i32, y: m.y as i32, w: m.width as i32, h: m.height as i32 })
+                .map(|m| Rect {
+                    x: m.x as i32,
+                    y: m.y as i32,
+                    w: m.width as i32,
+                    h: m.height as i32,
+                })
                 .collect::<Vec<_>>(),
         )
     };
@@ -142,7 +162,14 @@ fn monitors(x: &X) -> Vec<Rect> {
             .get_geometry(x.root)
             .ok()
             .and_then(|c| c.reply().ok())
-            .map(|g| vec![Rect { x: 0, y: 0, w: g.width as i32, h: g.height as i32 }])
+            .map(|g| {
+                vec![Rect {
+                    x: 0,
+                    y: 0,
+                    w: g.width as i32,
+                    h: g.height as i32,
+                }]
+            })
             .unwrap_or_default()
     })
 }
@@ -150,14 +177,26 @@ fn monitors(x: &X) -> Vec<Rect> {
 /// The window manager's usable area (screen minus panels) on the current desktop.
 fn workarea(x: &X) -> Option<Rect> {
     let value32 = |atom: u32, len: u32| {
-        let reply = x.conn.get_property(false, x.root, atom, AtomEnum::CARDINAL, 0, len).ok()?.reply().ok()?;
+        let reply = x
+            .conn
+            .get_property(false, x.root, atom, AtomEnum::CARDINAL, 0, len)
+            .ok()?
+            .reply()
+            .ok()?;
         let values: Option<Vec<u32>> = reply.value32().map(|it| it.collect());
         values
     };
-    let desktop = value32(x.current_desktop, 1).and_then(|v| v.first().copied()).unwrap_or(0) as usize;
+    let desktop = value32(x.current_desktop, 1)
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0) as usize;
     let all = value32(x.workarea, 4 * 64)?;
-    let r = all.chunks_exact(4).nth(desktop)?;
-    Some(Rect { x: r[0] as i32, y: r[1] as i32, w: r[2] as i32, h: r[3] as i32 })
+    let r = all.chunks(4).nth(desktop).filter(|r| r.len() == 4)?;
+    Some(Rect {
+        x: r[0] as i32,
+        y: r[1] as i32,
+        w: r[2] as i32,
+        h: r[3] as i32,
+    })
 }
 
 /// The area to place cards in: the monitor under the pointer, minus panels.
@@ -170,7 +209,11 @@ fn target_area(x: &X) -> Option<Rect> {
         .map(|p| (p.root_x as i32, p.root_y as i32))
         .unwrap_or((0, 0));
     let monitor = geom::pick_monitor(&monitors(x), pointer)?;
-    Some(workarea(x).and_then(|wa| monitor.intersect(&wa)).unwrap_or(monitor))
+    Some(
+        workarea(x)
+            .and_then(|wa| monitor.intersect(&wa))
+            .unwrap_or(monitor),
+    )
 }
 
 /// Puts the window in stack slot `slot` of the corner on the monitor holding the pointer.
@@ -184,7 +227,9 @@ pub fn place(w: &Window, width: f64, height: f64, slot: usize, pos: Position) {
 /// Whole-window opacity for the fades. Needs a compositor; without one the card just appears and
 /// disappears (and is drawn opaque, see `overlay.rs`).
 pub fn set_alpha(w: &Window, alpha: f64) {
-    let (Some(x), Some(id)) = (x(), window_id(w)) else { return };
+    let (Some(x), Some(id)) = (x(), window_id(w)) else {
+        return;
+    };
     if !x.compositor {
         return;
     }
@@ -192,7 +237,9 @@ pub fn set_alpha(w: &Window, alpha: f64) {
         let _ = x.conn.delete_property(id, x.opacity);
     } else {
         let v = (alpha.clamp(0.0, 1.0) * u32::MAX as f64) as u32;
-        let _ = x.conn.change_property32(PropMode::REPLACE, id, x.opacity, AtomEnum::CARDINAL, &[v]);
+        let _ =
+            x.conn
+                .change_property32(PropMode::REPLACE, id, x.opacity, AtomEnum::CARDINAL, &[v]);
     }
     let _ = x.conn.flush();
 }
@@ -200,7 +247,12 @@ pub fn set_alpha(w: &Window, alpha: f64) {
 /// Parent PID from the text of `/proc/<pid>/stat` (`pid (comm) state ppid ...`; `comm` may
 /// contain spaces and parentheses, so split after the last `)`).
 fn parse_ppid(stat: &str) -> Option<u32> {
-    stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
 }
 
 /// Raises the window of the terminal or IDE hosting Claude Code process `pid`: the nearest
@@ -241,7 +293,11 @@ pub fn focus_pid(pid: u32, _app: &str) {
             let _ = x.conn.flush();
             return;
         }
-        match std::fs::read_to_string(format!("/proc/{cur}/stat")).ok().as_deref().and_then(parse_ppid) {
+        match std::fs::read_to_string(format!("/proc/{cur}/stat"))
+            .ok()
+            .as_deref()
+            .and_then(parse_ppid)
+        {
             Some(p) if p > 1 => cur = p,
             _ => break,
         }

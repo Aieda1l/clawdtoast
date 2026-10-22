@@ -10,6 +10,8 @@ pub enum Offer {
     Show,
     /// No room; waits in the queue (or replaced that session's queued card).
     Queued,
+    Dismiss(usize),
+    Ignore,
 }
 
 pub struct Stack {
@@ -20,19 +22,34 @@ pub struct Stack {
 
 impl Stack {
     pub fn new(max: usize) -> Stack {
-        Stack { visible: Vec::new(), queue: VecDeque::new(), max: max.max(1) }
+        Stack {
+            visible: Vec::new(),
+            queue: VecDeque::new(),
+            max: max.max(1),
+        }
     }
 
     pub fn offer(&mut self, card: &Card) -> Offer {
-        if let Some(i) = self.visible.iter().position(|s| *s == card.session_id) {
+        let key = card.slot();
+        if let Some(i) = self.visible.iter().position(|s| *s == key) {
+            if card.dismiss {
+                return Offer::Dismiss(i);
+            }
             return Offer::Replace(i);
         }
-        if let Some(q) = self.queue.iter_mut().find(|q| q.session_id == card.session_id) {
-            *q = card.clone();
+        if let Some(i) = self.queue.iter().position(|q| q.slot() == key) {
+            if card.dismiss {
+                self.queue.remove(i);
+                return Offer::Ignore;
+            }
+            self.queue[i] = card.clone();
             return Offer::Queued;
         }
+        if card.silent || card.dismiss {
+            return Offer::Ignore;
+        }
         if self.visible.len() < self.max {
-            self.visible.push(card.session_id.clone());
+            self.visible.push(key);
             Offer::Show
         } else {
             self.queue.push_back(card.clone());
@@ -44,7 +61,7 @@ impl Stack {
     pub fn remove(&mut self, idx: usize) -> Option<Card> {
         self.visible.remove(idx);
         let next = self.queue.pop_front()?;
-        self.visible.push(next.session_id.clone());
+        self.visible.push(next.slot());
         Some(next)
     }
 
@@ -59,7 +76,21 @@ mod tests {
     use crate::protocol::Kind;
 
     fn card(sid: &str, body: &str) -> Card {
-        Card { session_id: sid.into(), kind: Kind::Done, project: "p".into(), body: body.into(), badge: None, ts: 0, pid: 0, app: String::new(), agent: String::new() }
+        Card {
+            session_id: sid.into(),
+            kind: Kind::Done,
+            project: "p".into(),
+            body: body.into(),
+            badge: None,
+            ts: 0,
+            pid: 0,
+            app: String::new(),
+            agent: String::new(),
+            pending_count: 0,
+            expires_at: 0,
+            silent: false,
+            dismiss: false,
+        }
     }
 
     #[test]
@@ -80,9 +111,51 @@ mod tests {
         assert!(matches!(s.offer(&card("b", "1")), Offer::Queued));
         assert!(matches!(s.offer(&card("b", "2")), Offer::Queued));
         let next = s.remove(0).unwrap();
-        assert_eq!((next.session_id.as_str(), next.body.as_str()), ("b", "2"), "queued card was replaced, not duplicated");
+        assert_eq!(
+            (next.session_id.as_str(), next.body.as_str()),
+            ("b", "2"),
+            "queued card was replaced, not duplicated"
+        );
         assert!(s.remove(0).is_none());
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn attention_coexists_with_done_and_silent_updates_never_resurrect_it() {
+        let mut s = Stack::new(3);
+        let mut attention = card("a", "Which option?");
+        attention.kind = Kind::Idle;
+        attention.pending_count = 2;
+        assert!(matches!(s.offer(&attention), Offer::Show));
+        assert!(matches!(s.offer(&card("a", "Finished")), Offer::Show));
+        attention.silent = true;
+        attention.pending_count = 1;
+        assert!(matches!(s.offer(&attention), Offer::Replace(0)));
+        attention.dismiss = true;
+        attention.pending_count = 0;
+        assert!(matches!(s.offer(&attention), Offer::Dismiss(0)));
+        s.remove(0);
+        attention.dismiss = false;
+        attention.pending_count = 1;
+        assert!(matches!(s.offer(&attention), Offer::Ignore));
+        assert!(matches!(
+            s.offer(&card("a", "Finished again")),
+            Offer::Replace(0)
+        ));
+    }
+
+    #[test]
+    fn resolving_queued_attention_prevents_its_later_promotion() {
+        let mut s = Stack::new(1);
+        s.offer(&card("busy", "Finished"));
+        let mut attention = card("a", "Which option?");
+        attention.pending_count = 1;
+        assert!(matches!(s.offer(&attention), Offer::Queued));
+        attention.dismiss = true;
+        attention.silent = true;
+        attention.pending_count = 0;
+        assert!(matches!(s.offer(&attention), Offer::Ignore));
+        assert!(s.remove(0).is_none());
     }
 
     #[test]

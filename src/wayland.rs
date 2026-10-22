@@ -225,7 +225,7 @@ fn paint(pool: &mut SlotPool, assets: &render::Assets, c: &mut WCard, alpha: f64
     let Ok((buffer, canvas)) = pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) else {
         return log::line("wayland: cannot allocate a buffer");
     };
-    for (dst, px) in canvas.chunks_exact_mut(4).zip(pixels) {
+    for (dst, px) in canvas.chunks_mut(4).zip(pixels) {
         dst.copy_from_slice(&px.to_le_bytes());
     }
     let surface = c.layer.wl_surface();
@@ -243,21 +243,30 @@ impl Wl {
         let card = match ev {
             Ev::Eof => {
                 self.eof = true;
+                self.cards.clear();
+                self.stack = Stack::new(1);
                 return;
             }
             Ev::Card(c) => c,
         };
         self.idle_since = None;
+        if card.expired(protocol::now_ms()) && !card.dismiss {
+            return;
+        }
         match self.stack.offer(&card) {
             Offer::Show => self.open(qh, card),
             Offer::Replace(i) => {
                 let c = &mut self.cards[i];
                 c.card = card;
-                c.timing.restart();
+                if !c.card.silent {
+                    c.timing.restart();
+                }
                 c.frame = 0;
                 paint(&mut self.pool, &self.assets, c, 0.0);
             }
             Offer::Queued => {}
+            Offer::Dismiss(i) => self.remove(qh, i, "resolved or session closed"),
+            Offer::Ignore => {}
         }
     }
 
@@ -313,7 +322,13 @@ impl Wl {
         let now = Instant::now();
         let hold = self.duration;
         let expired: Vec<usize> = (0..self.cards.len())
-            .filter(|&i| self.cards[i].timing.alpha(now, hold).is_none())
+            .filter(|&i| {
+                self.cards[i].card.expired(protocol::now_ms())
+                    || self.cards[i]
+                        .timing
+                        .alpha(now, self.cards[i].card.hold(hold))
+                        .is_none()
+            })
             .collect();
         for i in expired.into_iter().rev() {
             self.remove(qh, i, "timeout");
@@ -321,6 +336,7 @@ impl Wl {
 
         let mut next = now + Duration::from_secs(3600);
         for c in self.cards.iter_mut() {
+            let hold = c.card.hold(hold);
             let Some(alpha) = c.timing.alpha(now, hold) else {
                 continue;
             };
