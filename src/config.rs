@@ -26,7 +26,12 @@ pub struct Sound {
 
 impl Default for Sound {
     fn default() -> Sound {
-        Sound { enabled: true, volume: 0.6, done: None, attention: None }
+        Sound {
+            enabled: true,
+            volume: 0.6,
+            done: None,
+            attention: None,
+        }
     }
 }
 
@@ -41,7 +46,48 @@ pub struct Events {
 
 impl Default for Events {
     fn default() -> Events {
-        Events { stop: true, permission_prompt: true, idle_prompt: true, subagent_stop: false }
+        Events {
+            stop: true,
+            permission_prompt: true,
+            idle_prompt: true,
+            subagent_stop: false,
+        }
+    }
+}
+
+/// Which sprite to use when animation overrides are enabled.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SpriteChoice {
+    #[default]
+    Auto,
+    Clawd,
+    Codex,
+    Bae,
+    Custom,
+}
+
+/// Default is Clawd for Claude Code and the OpenAI spinner for Codex.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct Animation {
+    pub enabled: bool,
+    pub sprite: SpriteChoice,
+    pub file: Option<String>,
+    pub fps: f64,
+    /// Logical pixels reserved for a custom sprite (Clawd always renders at 64).
+    pub size: u32,
+}
+
+impl Default for Animation {
+    fn default() -> Animation {
+        Animation {
+            enabled: false,
+            sprite: SpriteChoice::Auto,
+            file: None,
+            fps: 8.0,
+            size: 88,
+        }
     }
 }
 
@@ -53,6 +99,7 @@ pub struct Config {
     pub max_stack: usize,
     pub sound: Sound,
     pub events: Events,
+    pub animation: Animation,
 }
 
 impl Default for Config {
@@ -63,6 +110,7 @@ impl Default for Config {
             max_stack: 3,
             sound: Sound::default(),
             events: Events::default(),
+            animation: Animation::default(),
         }
     }
 }
@@ -90,6 +138,11 @@ impl Config {
             c.duration_secs = 5.0;
         }
         c.sound.volume = c.sound.volume.clamp(0.0, 2.0);
+        if !c.animation.fps.is_finite() {
+            c.animation.fps = 8.0;
+        }
+        c.animation.fps = c.animation.fps.clamp(1.0, 60.0);
+        c.animation.size = c.animation.size.clamp(32, 88);
         Ok(c)
     }
 
@@ -103,7 +156,10 @@ impl Config {
             }),
             Err(_) => Config::default(),
         };
-        if let Some(d) = std::env::var("CLAWDTOAST_DURATION_SECS").ok().and_then(|v| v.parse().ok()) {
+        if let Some(d) = std::env::var("CLAWDTOAST_DURATION_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
             c.duration_secs = d;
         }
         if std::env::var_os("CLAWDTOAST_MUTE").is_some() {
@@ -118,6 +174,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use super::SpriteChoice;
     use super::*;
 
     #[test]
@@ -126,6 +183,10 @@ mod tests {
         assert_eq!(c.duration_secs, 5.0);
         assert_eq!(c.max_stack, 3);
         assert!(c.events.stop && !c.events.subagent_stop);
+        assert!(!c.animation.enabled);
+        assert_eq!(c.animation.sprite, SpriteChoice::Auto);
+        assert_eq!(c.animation.fps, 8.0);
+        assert_eq!(c.animation.size, 88);
     }
 
     #[test]
@@ -158,5 +219,49 @@ subagent_stop = true
         let c = Config::parse("max_stack = 99\nduration_secs = -1").unwrap();
         assert_eq!((c.max_stack, c.duration_secs), (6, 5.0));
         assert!(Config::parse("position = \"middle\"").is_err());
+    }
+
+    #[test]
+    fn optional_animation_config_and_fps_limits() {
+        let c = Config::parse(
+            "[animation]\nenabled = true\nfile = '~/sprites/test.png'\nfps = 12.5\nsize = 80",
+        )
+        .unwrap();
+        assert!(c.animation.enabled);
+        assert_eq!(c.animation.file.as_deref(), Some("~/sprites/test.png"));
+        assert_eq!(c.animation.fps, 12.5);
+        assert_eq!(c.animation.size, 80);
+        let choice = Config::parse("[animation]\nenabled = true\nsprite = 'bae'").unwrap();
+        assert!(choice.animation.enabled);
+        assert_eq!(choice.animation.sprite, SpriteChoice::Bae);
+        assert!(Config::parse("[animation]\nsprite = 'invalid'").is_err());
+        assert_eq!(
+            Config::parse("[animation]\nfps = -4")
+                .unwrap()
+                .animation
+                .fps,
+            1.0
+        );
+        assert_eq!(
+            Config::parse("[animation]\nfps = 1000")
+                .unwrap()
+                .animation
+                .fps,
+            60.0
+        );
+        assert_eq!(
+            Config::parse("[animation]\nsize = 999")
+                .unwrap()
+                .animation
+                .size,
+            88
+        );
+        assert_eq!(
+            Config::parse("[animation]\nsize = 4")
+                .unwrap()
+                .animation
+                .size,
+            32
+        );
     }
 }

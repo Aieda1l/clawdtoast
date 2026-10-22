@@ -184,6 +184,22 @@ fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
 }
 
 fn spawn_daemon() -> Result<(), String> {
+    // Codex/Claude capture stdout and stderr until every process holding their
+    // pipe write handles exits. Windows can inherit those handles even when the
+    // daemon's own stdio is redirected to NUL, leaving "Running hook" stuck
+    // after this short-lived hook process has exited.
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+        for handle in [
+            std::io::stdin().as_raw_handle(),
+            std::io::stdout().as_raw_handle(),
+            std::io::stderr().as_raw_handle(),
+        ] {
+            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0); }
+        }
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon")
