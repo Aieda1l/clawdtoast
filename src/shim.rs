@@ -183,23 +183,8 @@ fn lock_exclusive(deadline: Instant) -> Result<std::fs::File, String> {
     }
 }
 
+#[cfg(unix)]
 fn spawn_daemon() -> Result<(), String> {
-    // Codex/Claude capture stdout and stderr until every process holding their
-    // pipe write handles exits. Windows can inherit those handles even when the
-    // daemon's own stdio is redirected to NUL, leaving "Running hook" stuck
-    // after this short-lived hook process has exited.
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
-        for handle in [
-            std::io::stdin().as_raw_handle(),
-            std::io::stdout().as_raw_handle(),
-            std::io::stderr().as_raw_handle(),
-        ] {
-            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0); }
-        }
-    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon")
@@ -209,17 +194,63 @@ fn spawn_daemon() -> Result<(), String> {
     if std::env::var_os("CLAWDTOAST_HEADLESS").is_some() {
         cmd.arg("--headless");
     }
-    #[cfg(unix)]
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
             libc::setsid();
             Ok(())
         });
     }
-    // Detached from our console and process group, so it outlives the hook and Claude Code.
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0000_0008 | 0x0000_0200); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn spawn_daemon() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+
+    // PowerShell passes native commands extra inheritable copies of its capture
+    // pipes, beyond the three standard handles. Redirecting stdio to NUL or
+    // clearing inheritance on stdio alone leaves those copies in the daemon,
+    // so Codex waits for output EOF until the daemon exits. Disable ALL handle
+    // inheritance at process creation. A detached process starts without stdio.
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let application: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut command = std::ffi::OsString::from("\"");
+    command.push(&exe);
+    command.push("\" daemon");
+    if std::env::var_os("CLAWDTOAST_HEADLESS").is_some() {
+        command.push(" --headless");
+    }
+    let mut command: Vec<u16> = command.encode_wide().chain(Some(0)).collect();
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            command.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0, // bInheritHandles = FALSE, including non-stdio pipe handles.
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            std::ptr::null(), // Inherit the hook's environment and config overrides.
+            std::ptr::null(), // Inherit the current directory.
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+    Ok(())
 }
 
 /// Bundle id of the terminal this hook's environment came from, if it says: macOS sets

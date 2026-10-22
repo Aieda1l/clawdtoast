@@ -17,7 +17,7 @@ TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 
 for t in "${TARGETS[@]}"; do
   rustup target list --installed | grep -qx "$t" || rustup target add "$t"
-  cargo build --release --target "$t"
+  cargo build --locked --release --target "$t"
 done
 
 mkdir -p dist
