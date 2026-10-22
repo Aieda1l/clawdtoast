@@ -1,0 +1,134 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/release.sh'
+      - 'presets/**'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - name: Verify release tag belongs to main and matches the plugin version
+        if: github.event_name != 'pull_request'
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag_commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
+          test "$tag_commit" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+          version=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+          test "$RELEASE_TAG" = "v$version"
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            asset: clawdtoast-linux-x86_64.tar.gz
+          - os: windows-latest
+            asset: clawdtoast-windows-x86_64.zip
+          - os: macos-latest
+            asset: clawdtoast-macos-universal.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev fonts-dejavu-core
+      - run: cargo test --locked
+      - name: Build Windows and Linux
+        if: runner.os != 'macOS'
+        run: cargo build --locked --release
+      - name: Build and sign universal macOS binary
+        if: runner.os == 'macOS'
+        run: scripts/release.sh
+      - name: Windows hook regression tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/windows/codex-hooks.ps1
+      - name: Package binary, documentation and Bae preset
+        env:
+          ASSET_NAME: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          cp README.md LICENSE presets/bae.toml dist/package/
+          case "$RUNNER_OS" in
+            Windows)
+              cp target/release/clawdtoast.exe dist/package/
+              (cd dist/package && 7z a "../$ASSET_NAME" .)
+              ;;
+            macOS)
+              cp dist/clawdtoast dist/package/
+              (cd dist/package && zip -q "../$ASSET_NAME" ./*)
+              ;;
+            Linux)
+              cp target/release/clawdtoast dist/package/
+              tar -czf "dist/$ASSET_NAME" -C dist/package .
+              ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish release archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum clawdtoast-* > SHA256SUMS.txt)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi

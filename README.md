@@ -6,6 +6,19 @@ It runs while a supported agent session is open, uses about 9 MB while idle, and
 
 ## Install
 
+### Prebuilt binaries
+
+Download the archive for Windows x86_64, Linux x86_64 or universal macOS from
+[GitHub Releases](https://github.com/faletto/clawdtoast/releases). Each archive contains
+the executable, this README, the license and `bae.toml`. Extract it before installing
+the hooks using the commands below. On Windows, put `clawdtoast.exe` in a simple path
+such as `D:\Tools\clawdtoast`.
+
+To select Bae, copy the bundled `bae.toml` to `~/.config/clawdtoast/config.toml`
+(`%USERPROFILE%\.config\clawdtoast\config.toml` on Windows), then run `clawdtoast reload`.
+If you already have a config, merge its `[animation]` section to preserve your other settings.
+The macOS download has an ad-hoc signature and is not notarized; see [Releasing](#releasing).
+
 ### As a Claude Code plugin (recommended)
 
 ```
@@ -132,7 +145,7 @@ Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATI
 
 - **No cards after installing or updating:** the binary is still building. Check `target/build.log` in the plugin's folder (`~/.claude/plugins/cache/clawdtoast/clawdtoast/<version>`).
 - **Codex notifications never appear:** run `/hooks` in Codex and ensure ClawdToast's hooks are trusted. Check your `CODEX_HOME` and the `hooks.json` there. If Codex reports `Hook failed` with exit code 1 on Windows, rebuild and rerun `install codex` to replace older quoted commands, then review the updated hooks in `/hooks`.
-- **Codex stays on `Running hook` or alerts disappear intermittently:** rebuild the binary used by `~/.codex/hooks.json`. The Windows hook reader and daemon must both be up to date: older versions could wait for stdin EOF or leave the hook's captured output pipes open. On Windows, run `./tests/windows/codex-hooks.ps1 -Exe target/release/clawdtoast.exe` to exercise hooks with open input pipes and concurrent events.
+- **Codex stays on `Running hook` or alerts disappear intermittently:** rebuild the binary used by `hooks.json` in your `CODEX_HOME` (default `~/.codex`). The Windows hook reader and daemon must both be up to date: older versions could wait for stdin EOF or inherit extra PowerShell output pipe handles, leaving Codex waiting after the hook exited. Updating only the repo's binary does not update a separate installed copy. On Windows, run `./tests/windows/codex-hooks.ps1 -Exe target/release/clawdtoast.exe` to exercise PowerShell launches, open input pipes and concurrent events.
 - **Click doesn't focus anything:** `clawdtoast.log` says why (`no app found above pid ...`, `card has no pid ...`).
 - **Linux, no card and no notification:** `clawdtoast.log` names the cause: missing X11 libraries, a Wayland compositor without layer-shell and no X server (`DISPLAY` unset) and no `notify-send`/`gdbus` installed (`libnotify-bin` on Debian/Ubuntu), or no display in the hook's environment (`DISPLAY`/`WAYLAND_DISPLAY` unset, as over SSH or in a stale tmux server).
 - **Two daemons running:** a daemon from before 0.1.3 can't be replaced automatically; kill it and the next hook starts the current one.
@@ -141,7 +154,7 @@ Environment overrides (handy for tests): `CLAWDTOAST_CONFIG`, `CLAWDTOAST_DURATI
 
 ```
 cargo test                          # unit tests
-./tests/windows/codex-hooks.ps1     # Windows: Codex hook IPC and open-pipe regression
+./tests/windows/codex-hooks.ps1     # Windows: PowerShell capture, hook IPC and open input pipes
 tests/integration.sh [binary]       # headless lifecycle, config, install/uninstall tests
 scripts/check_budgets.sh [binary]   # resource budgets (CLAWDTOAST_CI_GUI=1 adds the overlay checks)
 python3 -I tools/gen_assets.py      # regenerate assets/ (sprite sheet + sounds)
@@ -168,6 +181,13 @@ CI (`.github/workflows/ci.yml`) runs the first three on macOS and Ubuntu, `cargo
 On Linux (measured in a container): binary 1.8 MB, idle daemon 3.9 MB, shim p95 4 ms, overlay with 3 cards about 44 MB. The UI lives in the short-lived overlay process because AppKit alone costs about 30 MB; the always-running daemon stays small.
 
 ### Releasing
+
+After merging and checking CI on `main`, create a tag matching the version in
+`.claude-plugin/plugin.json` (for example, `v0.1.12`) and push it to GitHub. The release
+workflow builds and tests Windows, Linux and universal macOS binaries, then publishes
+all three archives with `SHA256SUMS.txt` to the tagged release. Packaging changes also
+build on pull requests. The workflow can be run manually with an existing tag to rebuild
+its assets; it refuses tags outside `main` or with a mismatched version.
 
 `scripts/release.sh` builds arm64 + x86_64, joins them with `lipo`, signs, and zips. With `CODESIGN_IDENTITY="Developer ID Application: ..."` it signs for distribution, and with `NOTARY_PROFILE` it submits to Apple's notary service. Only the ad-hoc signing path has been exercised; Developer ID signing and notarization are untested.
 
