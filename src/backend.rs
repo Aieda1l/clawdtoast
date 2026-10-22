@@ -48,18 +48,29 @@ mod tests {
     use super::*;
 
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
     }
 
     #[test]
     fn wayland_session_prefers_layer_shell_then_xwayland_then_notification() {
         let e = env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")]);
-        assert_eq!(order(e), vec![Backend::Wayland, Backend::X11, Backend::Notify]);
+        assert_eq!(
+            order(e),
+            vec![Backend::Wayland, Backend::X11, Backend::Notify]
+        );
     }
 
     #[test]
     fn wayland_session_without_xwayland_falls_back_to_notification() {
-        assert_eq!(order(env(&[("WAYLAND_DISPLAY", "wayland-0")])), vec![Backend::Wayland, Backend::Notify]);
+        assert_eq!(
+            order(env(&[("WAYLAND_DISPLAY", "wayland-0")])),
+            vec![Backend::Wayland, Backend::Notify]
+        );
         assert_eq!(
             order(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", "")])),
             vec![Backend::Wayland, Backend::Notify]
@@ -68,7 +79,10 @@ mod tests {
 
     #[test]
     fn x11_session_uses_the_overlay_window() {
-        assert_eq!(order(env(&[("DISPLAY", ":1")])), vec![Backend::X11, Backend::Notify]);
+        assert_eq!(
+            order(env(&[("DISPLAY", ":1")])),
+            vec![Backend::X11, Backend::Notify]
+        );
     }
 
     #[test]
@@ -79,7 +93,13 @@ mod tests {
 
     #[test]
     fn override_forces_a_backend() {
-        assert_eq!(order(env(&[("CLAWDTOAST_BACKEND", "notify")])), vec![Backend::Notify]);
-        assert_eq!(order(env(&[("CLAWDTOAST_BACKEND", "x11")])), vec![Backend::X11, Backend::Notify]);
+        assert_eq!(
+            order(env(&[("CLAWDTOAST_BACKEND", "notify")])),
+            vec![Backend::Notify]
+        );
+        assert_eq!(
+            order(env(&[("CLAWDTOAST_BACKEND", "x11")])),
+            vec![Backend::X11, Backend::Notify]
+        );
     }
 }

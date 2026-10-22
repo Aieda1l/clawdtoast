@@ -2,7 +2,7 @@
 //! card is due it feeds `clawdtoast overlay` (a short-lived child process), so the daemon stays small.
 
 use crate::config::Config;
-use crate::core::{Card, Core};
+use crate::core::{Card, Core, QuestionCheckpoint};
 use crate::ipc::{self, Listener};
 use crate::protocol::{self, Msg};
 use crate::{log, paths, sound};
@@ -136,6 +136,17 @@ fn run_loop(listener: Listener, headless: bool) {
     let (tx, rx) = std::sync::mpsc::channel::<Msg>();
     spawn_acceptor(listener, tx);
     let mut core = Core::new(Instant::now(), Config::load());
+    let checkpoint_path = paths::support_dir().join("codex-questions.json");
+    ipc::secure_dir(&paths::support_dir());
+    if let Ok(file) = std::fs::File::open(&checkpoint_path) {
+        // Treat a corrupt/oversized checkpoint as absent; never prevent daemon startup.
+        if let Ok(saved) =
+            serde_json::from_reader::<_, QuestionCheckpoint>(file.take(4 * 1024 * 1024))
+        {
+            core.restore(saved, Instant::now(), protocol::now_ms());
+        }
+    }
+    let mut saved_revision = core.revision;
     let mut overlay: Option<Overlay> = None;
     loop {
         if overlay.as_mut().is_some_and(|o| !o.alive()) {
@@ -153,15 +164,50 @@ fn run_loop(listener: Listener, headless: bool) {
                 return;
             }
             if let Some(card) = core.handle(msg, Instant::now()) {
-                sound::play(card.kind, &core.config.sound);
+                if !card.silent {
+                    sound::play(card.kind, &core.config.sound);
+                }
                 if headless {
-                    log::line(&format!("card: {} | {}", card.title(), card.body));
+                    if card.silent {
+                        log::line(&format!("attention update: {}", card.title()));
+                    } else {
+                        log::line(&format!("card: {} | {}", card.title(), card.body));
+                    }
+                } else if card.silent {
+                    if let Some(o) = overlay.as_mut() {
+                        o.send(&card);
+                    }
                 } else {
                     show(&mut overlay, &card);
                 }
             }
         }
-        if core.tick(Instant::now(), overlay.is_some()) {
+        let exit = core.tick(Instant::now(), overlay.is_some());
+        while let Some(card) = core.take_effect() {
+            if headless {
+                log::line(&format!(
+                    "attention update: {} dismiss={}",
+                    card.title(),
+                    card.dismiss
+                ));
+            } else if let Some(o) = overlay.as_mut() {
+                // Never spawn an overlay just to remove or update an old card.
+                o.send(&card);
+            }
+        }
+        if core.revision != saved_revision {
+            let saved = core.checkpoint(Instant::now(), protocol::now_ms());
+            let tmp = checkpoint_path.with_extension("json.tmp");
+            let result = serde_json::to_vec(&saved)
+                .map_err(std::io::Error::other)
+                .and_then(|bytes| std::fs::write(&tmp, bytes))
+                .and_then(|_| std::fs::rename(&tmp, &checkpoint_path));
+            if let Err(e) = result {
+                log::line(&format!("question checkpoint: {e}"));
+            }
+            saved_revision = core.revision;
+        }
+        if exit {
             return;
         }
     }

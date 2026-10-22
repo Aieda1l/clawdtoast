@@ -115,7 +115,10 @@ mod tests {
         let later = t.shown_at + Duration::from_millis(410);
         assert_eq!(t.wave_frame(later, 11, tick), 5);
         // Hover began during fade-in, so the fade still needs a 16ms tick.
-        assert_eq!(t.next_wake(later, Duration::from_secs(5), tick), Some(later + FRAME));
+        assert_eq!(
+            t.next_wake(later, Duration::from_secs(5), tick),
+            Some(later + FRAME)
+        );
     }
 
     #[test]

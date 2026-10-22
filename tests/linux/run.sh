@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds clawdtoast for Linux in a container and runs display scenarios against it.
-# Usage: tests/linux/run.sh [test|x11|x11-comp|x11-wayland|wayland|fallback|lifecycle|all]  (default: all)
+# Usage: tests/linux/run.sh [test|x11|x11-comp|x11-wayland|wayland|fallback|attention|lifecycle|all]
 # Screenshots land in $OUT (default: ./target/linux-shots). Needs Docker (colima works).
 set -eu
 cd "$(dirname "$0")/../.."
@@ -26,10 +26,11 @@ case $scenario in
   x11-wayland) inside tests/linux/build-and-run.sh tests/linux/x11.sh $BIN /out wayland-fallback ;;
   wayland)   inside tests/linux/build-and-run.sh tests/linux/wayland.sh $BIN /out ;;
   fallback)  inside tests/linux/build-and-run.sh tests/linux/fallback.sh $BIN ;;
+  attention) inside tests/linux/build-and-run.sh bash tests/linux/attention.sh $BIN /out ;;
   lifecycle) inside tests/linux/build-and-run.sh tests/integration.sh $BIN ;;
   budgets)   inside tests/linux/build-and-run.sh scripts/check_budgets.sh $BIN ;;
   all)
-    for s in test lifecycle budgets x11 x11-comp x11-wayland wayland fallback; do
+    for s in test lifecycle budgets x11 x11-comp x11-wayland wayland fallback attention; do
       echo "=== $s"
       "$0" "$s"
     done ;;

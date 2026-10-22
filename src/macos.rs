@@ -2,10 +2,12 @@
 
 use crate::config::Position;
 use objc2::rc::Retained;
-use objc2::ClassType;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
 use objc2::sel;
-use objc2_app_kit::{NSEvent, NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
+use objc2::ClassType;
+use objc2_app_kit::{
+    NSEvent, NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
+};
 use objc2_foundation::{MainThreadMarker, NSPoint};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -15,7 +17,9 @@ const MARGIN: f64 = 12.0;
 const GAP: f64 = 8.0;
 
 fn ns_window(w: &Window) -> Option<Retained<NSWindow>> {
-    let RawWindowHandle::AppKit(h) = w.window_handle().ok()?.as_raw() else { return None };
+    let RawWindowHandle::AppKit(h) = w.window_handle().ok()?.as_raw() else {
+        return None;
+    };
     let view: &NSView = unsafe { h.ns_view.cast::<NSView>().as_ref() };
     view.window()
 }
@@ -80,7 +84,9 @@ pub fn configure(w: &Window, width: f64, height: f64, slot: usize, pos: Position
 /// Puts the window in stack slot `slot` of the corner on the screen holding the mouse pointer.
 /// Top corners stack downward, bottom corners upward.
 pub fn place(w: &Window, width: f64, height: f64, slot: usize, pos: Position) {
-    let (Some(win), Some(mtm)) = (ns_window(w), MainThreadMarker::new()) else { return };
+    let (Some(win), Some(mtm)) = (ns_window(w), MainThreadMarker::new()) else {
+        return;
+    };
     let mouse = unsafe { NSEvent::mouseLocation() };
     let screens = NSScreen::screens(mtm);
     let under_mouse = screens.iter().find(|s| {
@@ -98,10 +104,14 @@ pub fn place(w: &Window, width: f64, height: f64, slot: usize, pos: Position) {
     let offset = slot as f64 * (height + GAP);
     let x = match pos {
         Position::TopLeft | Position::BottomLeft => vf.origin.x + MARGIN + 4.0,
-        Position::TopRight | Position::BottomRight => vf.origin.x + vf.size.width - width - MARGIN - 4.0,
+        Position::TopRight | Position::BottomRight => {
+            vf.origin.x + vf.size.width - width - MARGIN - 4.0
+        }
     };
     let y = match pos {
-        Position::TopLeft | Position::TopRight => vf.origin.y + vf.size.height - height - MARGIN - offset,
+        Position::TopLeft | Position::TopRight => {
+            vf.origin.y + vf.size.height - height - MARGIN - offset
+        }
         Position::BottomLeft | Position::BottomRight => vf.origin.y + MARGIN + offset,
     };
     unsafe { win.setFrameOrigin(NSPoint::new(x, y)) };
@@ -121,11 +131,18 @@ pub fn focus_pid(pid: u32, app: &str) {
         if app.is_empty() {
             crate::log::line("macos: card has no pid, nothing to focus");
         } else {
-            let _ = std::process::Command::new("open").args(["-b", app]).status();
+            let _ = std::process::Command::new("open")
+                .args(["-b", app])
+                .status();
         }
         return;
     }
-    let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid="]).output() else { return };
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+    else {
+        return;
+    };
     let parents: std::collections::HashMap<i32, i32> = String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| {
@@ -141,7 +158,9 @@ pub fn focus_pid(pid: u32, app: &str) {
         if let Some(app) = app {
             // `activate` is a no-op for a background app on macOS 14+; LaunchServices is not.
             if let Some(id) = unsafe { app.bundleIdentifier() } {
-                let _ = std::process::Command::new("open").args(["-b", &id.to_string()]).status();
+                let _ = std::process::Command::new("open")
+                    .args(["-b", &id.to_string()])
+                    .status();
                 return;
             }
         }
@@ -153,7 +172,9 @@ pub fn focus_pid(pid: u32, app: &str) {
     if !app.is_empty() {
         // Background sessions have no terminal above them; fall back to the app the hook's
         // environment named.
-        let _ = std::process::Command::new("open").args(["-b", app]).status();
+        let _ = std::process::Command::new("open")
+            .args(["-b", app])
+            .status();
         return;
     }
     crate::log::line(&format!("macos: no app found above pid {pid}"));

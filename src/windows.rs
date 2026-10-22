@@ -1,18 +1,20 @@
 //! The only platform-specific window code on Windows: float above everything without taking focus.
 
 use crate::config::Position;
-use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::Window;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateRoundRectRgn, GetMonitorInfoW, MonitorFromPoint, SetWindowRgn, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    CreateRoundRectRgn, GetMonitorInfoW, MonitorFromPoint, SetWindowRgn, MONITORINFO,
+    MONITOR_DEFAULTTOPRIMARY,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOSIZE,
-    SW_RESTORE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    EnumWindows, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GW_OWNER,
+    HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOSIZE, SW_RESTORE, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::window::Window;
 
 const MARGIN: f64 = 12.0;
 const GAP: f64 = 8.0;
@@ -32,7 +34,8 @@ pub fn configure(w: &Window, width: f64, height: f64, slot: usize, pos: Position
     let Some(h) = hwnd(w) else { return };
     unsafe {
         let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
-        let ex = ex | (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST) as isize;
+        let ex =
+            ex | (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST) as isize;
         SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
     }
     place(w, width, height, slot, pos);
@@ -53,7 +56,15 @@ pub fn place(w: &Window, _width: f64, _height: f64, slot: usize, pos: Position) 
         }
         let work = mi.rcWork;
         // Move onto the target monitor first: the window's DPI (and so its size) follows it.
-        SetWindowPos(h, HWND_TOPMOST, work.left, work.top, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(
+            h,
+            HWND_TOPMOST,
+            work.left,
+            work.top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE,
+        );
         let s = w.scale_factor();
         let size = w.outer_size();
         let (pw, ph) = (size.width as i32, size.height as i32);
@@ -76,7 +87,14 @@ pub fn place(w: &Window, _width: f64, _height: f64, slot: usize, pos: Position) 
 
 pub fn set_alpha(w: &Window, alpha: f64) {
     if let Some(h) = hwnd(w) {
-        unsafe { SetLayeredWindowAttributes(h, 0, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8, LWA_ALPHA) };
+        unsafe {
+            SetLayeredWindowAttributes(
+                h,
+                0,
+                (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+                LWA_ALPHA,
+            )
+        };
     }
 }
 

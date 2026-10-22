@@ -11,7 +11,11 @@ pub fn play(kind: Kind, cfg: &Sound) {
     if !cfg.enabled || cfg.volume <= 0.0 {
         return;
     }
-    let (custom, builtin) = if kind == Kind::Done { (&cfg.done, CHIME) } else { (&cfg.attention, PING) };
+    let (custom, builtin) = if kind == Kind::Done {
+        (&cfg.done, CHIME)
+    } else {
+        (&cfg.attention, PING)
+    };
     // A custom file that cannot be read falls back to the built-in sound.
     let data: Vec<u8> = custom
         .as_deref()
@@ -23,7 +27,9 @@ pub fn play(kind: Kind, cfg: &Sound) {
             crate::log::line("sound: no output device");
             return;
         };
-        let Ok(sink) = rodio::Sink::try_new(&handle) else { return };
+        let Ok(sink) = rodio::Sink::try_new(&handle) else {
+            return;
+        };
         let Ok(src) = rodio::Decoder::new(Cursor::new(data)) else {
             crate::log::line("sound: cannot decode (custom sounds must be WAV)");
             return;

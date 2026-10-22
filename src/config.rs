@@ -42,6 +42,9 @@ pub struct Events {
     pub permission_prompt: bool,
     pub idle_prompt: bool,
     pub subagent_stop: bool,
+    pub blocking_questions: bool,
+    pub async_questions: bool,
+    pub interrupted: bool,
 }
 
 impl Default for Events {
@@ -51,6 +54,32 @@ impl Default for Events {
             permission_prompt: true,
             idle_prompt: true,
             subagent_stop: false,
+            blocking_questions: true,
+            async_questions: true,
+            interrupted: false,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct Attention {
+    /// Retain a question card beyond the ordinary notification duration.
+    pub persistent: bool,
+    /// Hard lifetime, including hover; bounds stale cards when a lifecycle event is missed.
+    pub max_age_secs: u64,
+    /// Forget unconfirmed questions, without claiming they were answered.
+    pub question_ttl_secs: u64,
+    pub show_question_text: bool,
+}
+
+impl Default for Attention {
+    fn default() -> Self {
+        Self {
+            persistent: false,
+            max_age_secs: 300,
+            question_ttl_secs: 3600,
+            show_question_text: true,
         }
     }
 }
@@ -100,6 +129,7 @@ pub struct Config {
     pub sound: Sound,
     pub events: Events,
     pub animation: Animation,
+    pub attention: Attention,
 }
 
 impl Default for Config {
@@ -111,6 +141,7 @@ impl Default for Config {
             sound: Sound::default(),
             events: Events::default(),
             animation: Animation::default(),
+            attention: Attention::default(),
         }
     }
 }
@@ -134,6 +165,8 @@ impl Config {
     pub fn parse(src: &str) -> Result<Config, toml::de::Error> {
         let mut c: Config = toml::from_str(src)?;
         c.max_stack = c.max_stack.clamp(1, 6);
+        c.attention.max_age_secs = c.attention.max_age_secs.clamp(5, 3600);
+        c.attention.question_ttl_secs = c.attention.question_ttl_secs.clamp(30, 86400);
         if !(c.duration_secs.is_finite() && c.duration_secs > 0.0) {
             c.duration_secs = 5.0;
         }
@@ -219,6 +252,21 @@ subagent_stop = true
         let c = Config::parse("max_stack = 99\nduration_secs = -1").unwrap();
         assert_eq!((c.max_stack, c.duration_secs), (6, 5.0));
         assert!(Config::parse("position = \"middle\"").is_err());
+    }
+
+    #[test]
+    fn attention_defaults_preserve_temporary_behavior_and_old_event_switches() {
+        let c = Config::parse("[events]\nstop = true\npermission_prompt = false\nidle_prompt = false\nsubagent_stop = true").unwrap();
+        assert!(!c.attention.persistent);
+        assert!(c.attention.show_question_text);
+        assert!(c.events.blocking_questions && c.events.async_questions && !c.events.interrupted);
+        assert!(!c.events.permission_prompt && !c.events.idle_prompt && c.events.subagent_stop);
+        let c = Config::parse("[attention]\npersistent=true\nmax_age_secs=0\nquestion_ttl_secs=999999\nshow_question_text=false").unwrap();
+        assert_eq!(
+            (c.attention.max_age_secs, c.attention.question_ttl_secs),
+            (5, 86400)
+        );
+        assert!(!c.attention.show_question_text);
     }
 
     #[test]
