@@ -100,6 +100,7 @@ fn self_test(agent: &str) {
             // Distinct sessions, so the cards stack instead of replacing each other.
             session_id: format!("test{i}"),
             kind,
+            event_id: String::new(),
             project: "clawdtoast".into(),
             text: text.into(),
             ts: protocol::now_ms(),

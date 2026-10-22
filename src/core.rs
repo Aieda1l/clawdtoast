@@ -3,10 +3,23 @@
 use crate::config::Config;
 use crate::protocol::{Kind, Msg};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 const IDLE_BACKSTOP: Duration = Duration::from_secs(24 * 3600);
+const UNIDENTIFIED_PROMPT_DEBOUNCE: Duration = Duration::from_secs(2);
+
+struct WaitingPrompt {
+    id: String,
+    text: String,
+    at: Instant,
+}
+
+fn waiting_turn(id: &str) -> Option<&str> {
+    let (_, rest) = id.split_once(':')?;
+    let (turn, _) = rest.split_once(':')?;
+    (!turn.is_empty()).then_some(turn)
+}
 
 pub struct Session {
     pub pid: u32,
@@ -43,6 +56,8 @@ impl Card {
 
 pub struct Core {
     pub sessions: HashMap<String, Session>,
+    /// Recent Codex prompt identities per session; keep retries from chiming again.
+    last_waiting: HashMap<String, VecDeque<WaitingPrompt>>,
     empty_since: Option<Instant>,
     last_activity: Instant,
     next_liveness: Instant,
@@ -60,6 +75,7 @@ impl Core {
         let liveness = env_secs("CLAWDTOAST_LIVENESS_SECS", 30);
         Core {
             sessions: HashMap::new(),
+            last_waiting: HashMap::new(),
             empty_since: Some(now),
             last_activity: now,
             next_liveness: now + liveness,
@@ -74,16 +90,18 @@ impl Core {
         self.last_activity = now;
         match msg {
             Msg::SessionOpen { session_id, pid, .. } => {
+                self.last_waiting.remove(&session_id);
                 self.sessions.insert(session_id, Session { pid });
                 self.empty_since = None;
                 None
             }
             Msg::SessionClose { session_id } => {
+                self.last_waiting.remove(&session_id);
                 self.sessions.remove(&session_id);
                 self.note_empty(now);
                 None
             }
-            Msg::Alert { session_id, kind, project, text, ts, pid, app, agent } => {
+            Msg::Alert { session_id, kind, event_id, project, text, ts, pid, app, agent } => {
                 let e = &self.config.events;
                 let enabled = match kind {
                     Kind::Done => e.stop,
@@ -94,6 +112,28 @@ impl Core {
                 };
                 if !enabled {
                     return None;
+                }
+                if kind == Kind::Idle && agent == "codex" {
+                    let seen = self.last_waiting.entry(session_id.clone()).or_default();
+                    let duplicate = seen.iter().any(|old| {
+                        let same_id = !event_id.is_empty() && old.id == event_id;
+                        let same_question = old.text == text;
+                        let same_turn = waiting_turn(&old.id).zip(waiting_turn(&event_id))
+                            .is_some_and(|(a, b)| a == b);
+                        let different_signal = old.id.starts_with("input:") != event_id.starts_with("input:");
+                        let missing_id = old.id.is_empty() || event_id.is_empty();
+                        same_id || (same_question && ((same_turn && different_signal)
+                            || (missing_id && now.saturating_duration_since(old.at) < UNIDENTIFIED_PROMPT_DEBOUNCE)))
+                    });
+                    if duplicate {
+                        return None;
+                    }
+                    if seen.len() == 16 {
+                        seen.pop_front();
+                    }
+                    seen.push_back(WaitingPrompt { id: event_id, text: text.clone(), at: now });
+                } else if kind != Kind::Idle {
+                    self.last_waiting.remove(&session_id);
                 }
                 // An alert from a session we never saw open (plugin installed mid-session).
                 let s = self.sessions.entry(session_id.clone()).or_insert(Session { pid: 0 });
@@ -124,6 +164,7 @@ impl Core {
         if now >= self.next_liveness {
             self.next_liveness = now + self.liveness;
             self.sessions.retain(|_, s| s.pid == 0 || pid_alive(s.pid));
+            self.last_waiting.retain(|id, _| self.sessions.contains_key(id));
             self.note_empty(now);
         }
         if now.duration_since(self.last_activity) > IDLE_BACKSTOP {
@@ -154,7 +195,7 @@ mod tests {
     use super::*;
 
     fn alert(sid: &str, kind: Kind) -> Msg {
-        Msg::Alert { session_id: sid.into(), kind, project: "p".into(), text: "t".into(), ts: 0, pid: 0, app: String::new(), agent: String::new() }
+        Msg::Alert { session_id: sid.into(), kind, event_id: String::new(), project: "p".into(), text: "t".into(), ts: 0, pid: 0, app: String::new(), agent: String::new() }
     }
 
     #[test]
@@ -175,6 +216,59 @@ mod tests {
         c.config.events.stop = false;
         assert!(c.handle(alert("s", Kind::Done), now).is_none());
         assert!(c.handle(alert("s", Kind::Idle), now).is_some());
+    }
+
+    #[test]
+    fn repeated_codex_questions_are_deduplicated_per_session_and_prompt() {
+        let now = Instant::now();
+        let mut core = Core::new(now, Config::default());
+        let question = |sid: &str, id: &str| Msg::Alert {
+            session_id: sid.into(), kind: Kind::Idle, event_id: id.into(),
+            project: "p".into(), text: "Which option?".into(), ts: 0, pid: 0,
+            app: String::new(), agent: "codex".into(),
+        };
+        assert!(core.handle(question("a", "input:t:call1"), now).is_some());
+        assert!(core.handle(question("a", "input:t:call1"), now).is_none());
+        assert!(core.handle(question("b", "input:t:call1"), now).is_some());
+        assert!(core.handle(question("a", "input:t:call2"), now).is_some());
+        assert!(core.handle(question("a", "input:t:call2"), now).is_none());
+        assert!(core.handle(question("a", "input:t:call1"), now).is_none());
+        core.handle(alert("a", Kind::Done), now);
+        assert!(core.handle(question("a", "input:t:call2"), now).is_some());
+        core.handle(Msg::SessionClose { session_id: "a".into() }, now);
+        assert!(core.handle(question("a", "input:t:call2"), now).is_some());
+    }
+
+    #[test]
+    fn codex_question_from_tool_and_stop_chimes_once_per_turn() {
+        let now = Instant::now();
+        let mut core = Core::new(now, Config::default());
+        let question = |id: &str| Msg::Alert {
+            session_id: "codex:s".into(), kind: Kind::Idle, event_id: id.into(),
+            project: "p".into(), text: "Which option?".into(), ts: 0, pid: 0,
+            app: String::new(), agent: "codex".into(),
+        };
+        assert!(core.handle(question("input:t1:tool1"), now).is_some());
+        assert!(core.handle(question("stop:t1:"), now + Duration::from_secs(5)).is_none());
+        // Distinct tool calls and turns can each need an answer, even with the same text.
+        assert!(core.handle(question("input:t1:tool2"), now + Duration::from_secs(6)).is_some());
+        assert!(core.handle(question("stop:t2:"), now + Duration::from_secs(7)).is_some());
+    }
+
+    #[test]
+    fn unidentified_questions_debounce_briefly_but_can_recur() {
+        let now = Instant::now();
+        let mut core = Core::new(now, Config::default());
+        let question = || Msg::Alert {
+            session_id: "codex:s".into(), kind: Kind::Idle, event_id: String::new(),
+            project: "p".into(), text: "Which option?".into(), ts: 0, pid: 0,
+            app: String::new(), agent: "codex".into(),
+        };
+        assert!(core.handle(question(), now).is_some());
+        assert!(core.handle(question(), now + Duration::from_millis(500)).is_none());
+        assert!(core.handle(question(), now + Duration::from_secs(3)).is_some());
+        core.config.events.idle_prompt = false;
+        assert!(core.handle(question(), now + Duration::from_secs(6)).is_none());
     }
 
     #[test]

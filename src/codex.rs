@@ -8,12 +8,15 @@ use std::io::Read;
 use std::time::{Duration, Instant};
 
 /// (Codex event, argument to `clawdtoast codex-hook`)
-const HOOKS: [(&str, &str); 5] = [
+const HOOKS: [(&str, &str); 6] = [
     ("SessionStart", "session-start"),
     ("SessionEnd", "session-end"),
     ("Stop", "stop"),
     ("SubagentStop", "subagent-stop"),
     ("PermissionRequest", "permission-request"),
+    // Codex has no user-input-requested hook. Observe the local function tool
+    // before it blocks waiting for the answer (when that tool uses hook dispatch).
+    ("PreToolUse", "pre-tool-use"),
 ];
 
 /// Codex hooks must never block or interrupt the agent.
@@ -138,9 +141,10 @@ fn translate(event: &str, v: &Value, pid: u32, app: String) -> Result<Option<Msg
     } else {
         text::project_name(cwd)
     };
-    let alert = |kind, body| Msg::Alert {
+    let alert = |kind, body, event_id| Msg::Alert {
         session_id: session_id.clone(),
         kind,
+        event_id,
         project: project.clone(),
         text: body,
         ts: protocol::now_ms(),
@@ -157,24 +161,93 @@ fn translate(event: &str, v: &Value, pid: u32, app: String) -> Result<Option<Msg
         "session-end" => Msg::SessionClose { session_id },
         "stop" => {
             // Codex supplies the assistant message directly. Its transcript format is unstable.
-            let body = v["last_assistant_message"]
-                .as_str()
-                .map(text::first_sentence)
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "Finished".into());
-            alert(Kind::Done, body)
+            let message = v["last_assistant_message"].as_str().unwrap_or("");
+            if let Some(question) = final_question(message) {
+                alert(Kind::Idle, question, event_id(v, "stop"))
+            } else {
+                let body = text::first_sentence(message);
+                alert(Kind::Done, if body.is_empty() { "Finished".into() } else { body }, String::new())
+            }
         }
-        "subagent-stop" => alert(Kind::Subagent, "A Codex subagent finished".into()),
+        "subagent-stop" => alert(Kind::Subagent, "A Codex subagent finished".into(), String::new()),
         "permission-request" => {
             let tool = v["tool_name"]
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("a tool");
             // Avoid including raw commands or other potentially sensitive tool arguments.
-            alert(Kind::Permission, format!("Codex needs approval for {tool}"))
+            alert(Kind::Permission, format!("Codex needs approval for {tool}"), String::new())
+        }
+        "pre-tool-use" => {
+            // Only the question tool is an input pause. Other PreToolUse events
+            // (including approvals) must not create waiting notifications.
+            if v["tool_name"] != "request_user_input" {
+                return Ok(None);
+            }
+            // Auto-resolving/nonblocking questionnaires do not require a typed reply.
+            if v["tool_input"]["is_blocking"] == false
+                || v["tool_input"]["auto_resolution_ms"].as_u64().is_some()
+            {
+                return Ok(None);
+            }
+            let Some(question) = v["tool_input"]["questions"]
+                .as_array()
+                .and_then(|questions| questions.first())
+                .and_then(|q| q["question"].as_str())
+                .map(text::question_text)
+                .filter(|q| !q.is_empty()) else {
+                    return Ok(None);
+                };
+            alert(Kind::Idle, question, event_id(v, "input"))
         }
         _ => return Ok(None),
     }))
+}
+
+/// Identity scoped to the current question/turn, so a retried hook can't chime twice.
+fn event_id(v: &Value, prefix: &str) -> String {
+    let turn = v["turn_id"].as_str().unwrap_or("");
+    let tool = if prefix == "input" { v["tool_use_id"].as_str().unwrap_or("") } else { "" };
+    if turn.is_empty() && tool.is_empty() {
+        return String::new();
+    }
+    format!("{prefix}:{turn}:{tool}")
+}
+
+/// Stop can be a plain-text request for a reply rather than a completed task.
+/// Be conservative: only a final, direct question addressed to the user counts.
+fn final_question(message: &str) -> Option<String> {
+    let end = message.trim().trim_end_matches(['*', '`', '_', '"', '\'', ')', ' ', '\n']);
+    if !end.ends_with('?') { return None; }
+    let last_line = end.rsplit('\n').next()?.trim();
+    // A sentence boundary needs whitespace after the punctuation. Periods
+    // inside Node.js, config.toml, or v1.2 are part of the question itself.
+    let mut start = 0;
+    for (i, ch) in last_line[..last_line.len() - 1].char_indices() {
+        if matches!(ch, '.' | '!' | '?')
+            && last_line[i + ch.len_utf8()..].chars().next().is_some_and(char::is_whitespace)
+        {
+            start = i + ch.len_utf8();
+        }
+    }
+    let question = last_line[start..].trim().trim_start_matches(['-', '*', '>', '#', ' ']);
+    let lower = question.to_ascii_lowercase();
+    let first = lower.split_whitespace().next()?;
+    let interrogative = matches!(first, "what" | "which" | "when" | "where" | "how" | "who" | "why"
+        | "is" | "are" | "do" | "does" | "did" | "can" | "could" | "would" | "will"
+        | "should" | "shall" | "have" | "has");
+    let directed = [" you ", " your ", " i ", " me ", " we ", " us "]
+        .iter().any(|s| format!(" {lower} ").contains(s))
+        // Elliptical follow-ups such as "Which database?" or "What format?"
+        // often omit pronouns. Exclude broad explanatory "What is ...?" questions.
+        || (first == "which" && lower.split_whitespace().count() <= 10)
+        || (first == "what" && lower.split_whitespace().count() <= 5
+            && !matches!(lower.split_whitespace().nth(1), Some("is" | "are" | "was" | "were" | "do" | "does" | "did" | "if")));
+    if interrogative && directed {
+        Some(text::question_text(question))
+    } else {
+        None
+    }
 }
 
 fn codex_pid() -> u32 {
@@ -244,7 +317,11 @@ pub fn merge(settings: &mut Value, exe: &str) -> Result<usize, String> {
         }
         groups.retain(|g| g["hooks"].as_array().is_none_or(|h| !h.is_empty()));
         if !found {
-            groups.push(json!({ "hooks": [{ "type": "command", "command": wanted }] }));
+            let mut group = json!({ "hooks": [{ "type": "command", "command": wanted }] });
+            if event == "PreToolUse" {
+                group["matcher"] = json!("^request_user_input$");
+            }
+            groups.push(group);
             changed += 1;
         }
     }
@@ -369,15 +446,77 @@ mod tests {
     }
 
     #[test]
+    fn notifies_for_structured_questions_only() {
+        let payload = json!({ "session_id": "s", "cwd": "/work/app", "turn_id": "turn1",
+            "tool_use_id": "call1", "tool_name": "request_user_input",
+            "tool_input": { "questions": [{ "question": "Which database should I use?",
+                "options": [{ "label": "SQLite" }, { "label": "Postgres" }] }] } });
+        assert!(matches!(translate("pre-tool-use", &payload, 15, String::new()).unwrap(),
+            Some(Msg::Alert { kind: Kind::Idle, text, event_id, agent, .. })
+            if text == "Which database should I use?" && event_id == "input:turn1:call1" && agent == "codex"));
+        let mut with_colon = payload.clone();
+        with_colon["tool_input"]["questions"][0]["question"] = json!("Which environment: staging or production?");
+        assert!(matches!(translate("pre-tool-use", &with_colon, 15, String::new()).unwrap(),
+            Some(Msg::Alert { kind: Kind::Idle, text, .. })
+            if text == "Which environment: staging or production?"));
+        for tool in ["Bash", "apply_patch", "update_plan", "mcp__server__tool"] {
+            let mut other = payload.clone();
+            other["tool_name"] = json!(tool);
+            assert!(translate("pre-tool-use", &other, 0, String::new()).unwrap().is_none());
+        }
+        let mut no_question = payload.clone();
+        no_question["tool_input"] = json!({ "questions": [] });
+        assert!(translate("pre-tool-use", &no_question, 0, String::new()).unwrap().is_none());
+        for input in [json!({"is_blocking": false}), json!({"auto_resolution_ms": 500})] {
+            let mut auto = payload.clone();
+            for (key, val) in input.as_object().unwrap() {
+                auto["tool_input"][key] = val.clone();
+            }
+            assert!(translate("pre-tool-use", &auto, 0, String::new()).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn stop_distinguishes_follow_up_from_completion() {
+        for (message, expected) in [
+            ("I have two options. Which approach should I use?", "Which approach should I use?"),
+            ("Can you clarify the target platform?", "Can you clarify the target platform?"),
+            ("**Would you like me to continue?**", "Would you like me to continue?"),
+            ("Which database?", "Which database?"),
+            ("What file format?", "What file format?"),
+            ("Can I use Node.js?", "Can I use Node.js?"),
+            ("Can we ship v1.2?", "Can we ship v1.2?"),
+            ("Should I edit config.toml?", "Should I edit config.toml?"),
+            ("I checked README.md. Can I use Node.js?", "Can I use Node.js?"),
+            ("Which environment: staging or production?", "Which environment: staging or production?"),
+        ] {
+            let v = json!({ "session_id": "s", "turn_id": "t", "last_assistant_message": message });
+            assert!(matches!(translate("stop", &v, 0, String::new()).unwrap(),
+                Some(Msg::Alert { kind: Kind::Idle, text, event_id, .. })
+                if text == expected && event_id == "stop:t:"));
+        }
+        for message in ["Finished implementing the parser.", "What is 2+2?", "What is a socket? Here is the answer.", "", "Use `help?` to learn more."] {
+            let v = json!({ "session_id": "s", "last_assistant_message": message });
+            assert!(matches!(translate("stop", &v, 0, String::new()).unwrap(), Some(Msg::Alert { kind: Kind::Done, .. })));
+        }
+    }
+
+    #[test]
     fn merges_without_affecting_unrelated_hooks() {
         let original = json!({"description": "mine",
-            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo hello"}]}]}});
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": "echo hello"}]}],
+                "PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "echo other"}]}]
+            }});
         let mut s = original.clone();
-        assert_eq!(merge(&mut s, "/bin/clawdtoast").unwrap(), 5);
+        assert_eq!(merge(&mut s, "/bin/clawdtoast").unwrap(), 6);
+        assert_eq!(s["hooks"]["PreToolUse"][0]["matcher"], "^Bash$");
+        assert_eq!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "echo other");
+        assert_eq!(s["hooks"]["PreToolUse"][1]["matcher"], "^request_user_input$");
         assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "echo hello");
         assert_eq!(merge(&mut s, "/bin/clawdtoast").unwrap(), 0);
-        assert_eq!(merge(&mut s, "/new/clawdtoast").unwrap(), 5);
-        assert_eq!(strip(&mut s), 5);
+        assert_eq!(merge(&mut s, "/new/clawdtoast").unwrap(), 6);
+        assert_eq!(strip(&mut s), 6);
         assert_eq!(s, original);
         assert_eq!(strip(&mut s), 0);
     }

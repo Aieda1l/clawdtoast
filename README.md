@@ -75,6 +75,8 @@ both Claude Code and Codex adapters; they share one daemon.
 commands until you approve them. Re-install after moving or rebuilding the binary at a different
 path, then review any updated hook definitions. Some Codex environments may restrict user hooks
 through managed configuration.
+When upgrading, run `install codex` again to add the `PreToolUse` question hook, then trust it
+through `/hooks`.
 
 ## What it does
 
@@ -85,10 +87,24 @@ through managed configuration.
 | `Notification` `idle_prompt` | Waiting for you · project, the hook's message | ping |
 | `SubagentStop` | off by default | ping |
 
-Codex maps `Stop` (using `last_assistant_message`), `PermissionRequest` (tool name only),
-and `SubagentStop` to the same card types. `SessionStart` and `SessionEnd` track Codex sessions
-without colliding with Claude sessions. The Codex adapter never approves or denies tool calls.
-Codex does not currently provide a direct equivalent of Claude's `idle_prompt` event.
+Codex uses `Stop` (`last_assistant_message`), `PermissionRequest` (tool name only), and
+`SubagentStop` for its existing cards. It also shows **Waiting for you** with the usual animated
+Codex card and attention ping when a `PreToolUse` hook sees `request_user_input` with a question,
+or when a `Stop` message ends in a direct question to the user (for example, “Which option should
+I use?”). A question-ending `Stop` shows **Waiting for you** instead of **Done**. The daemon
+deduplicates retries by session and tool-call/turn id, including questions seen by both hooks.
+Without event ids, identical prompts are debounced for two seconds. `idle_prompt = false`
+disables these alerts, as for Claude Code.
+
+Codex currently has no dedicated external event for typed-input waits. `PreToolUse` is the
+supported best-effort signal for structured `request_user_input` calls, but some specialized tool
+paths or Codex clients may bypass tool hooks; a hook runs just before the call, so an eventual
+rejected/canceled call can still trigger a card. `Stop` only detects obvious, user-directed final
+questions; ambiguous wording, questions followed by option lists or other prose, and TUI-only
+dialogs (such as “Implement this plan?”) may be missed. ClawdToast does not parse Codex transcript
+files or use terminal escape sequences, whose formats and behavior are not dependable across
+platforms. `SessionStart` and `SessionEnd` track Codex sessions without colliding with Claude
+sessions. The Codex adapter never approves or denies tool calls.
 
 - Cards sit in a corner of the screen holding the mouse (top-right by default), above other windows, and never take focus, neither when they appear nor when you click one. On macOS they also float above full-screen apps and on every Space, with no Accessibility permission needed. Clawd waves at 8 fps by default.
 - Up to 3 cards stack; more wait in a queue. A new alert for a session that already has a card replaces it. With more than one session open, the title carries a 4-character session tag.
