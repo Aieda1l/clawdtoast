@@ -90,6 +90,7 @@ fn read_payload() -> Result<Value, String> {
 #[cfg(windows)]
 fn stdin_available() -> Result<usize, String> {
     use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_DISK};
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 
     let handle = std::io::stdin().as_raw_handle();
@@ -98,6 +99,11 @@ fn stdin_available() -> Result<usize, String> {
         PeekNamedPipe(handle, std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut available, std::ptr::null_mut())
     };
     if ok == 0 {
+        // Windows also permits hooks with stdin redirected from a regular file.
+        // These handles cannot be peeked, but reads never wait for a writer.
+        if unsafe { GetFileType(handle) } == FILE_TYPE_DISK {
+            return Ok(8192);
+        }
         return Err(format!("hook stdin pipe: {}", std::io::Error::last_os_error()));
     }
     Ok(available as usize)
